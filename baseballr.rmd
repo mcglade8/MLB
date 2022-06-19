@@ -1,0 +1,1827 @@
+---
+title: "baseballr"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+library(baseballr)
+library(dplyr)
+library(ggplot2)
+#library(reshape2) not available: Error in library(reshape2) : there is no package called ‘reshape2’; replacing with tidyr
+library(tidyr) #attempting to replace reshape2 based on CRAN suggestion
+library(zoo)
+library(TTR)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+
+###Mookie Betts Vignette
+```{r baseball}
+
+
+betts_id <- playerid_lookup("Betts") %>%
+  dplyr::filter(first_name == "Mookie") %>%
+  dplyr::select(mlbam_id, first_name, last_name)
+
+
+betts_15 <- statcast_search("2015-03-31", "2015-10-31", playerid = betts_id[1,1], player_type = 'batter')
+betts_16 <- statcast_search("2016-03-31", "2016-10-31", playerid = betts_id[1,1], player_type = 'batter')   
+betts <- dplyr::bind_rows(betts_15, betts_16) %>%
+  dplyr::mutate(Year = as.factor(substr(game_date,1,4))) %>%
+  dplyr::filter(type == "X") %>%
+  dplyr::filter(launch_speed != 0)
+
+betts_grpd <- betts %>%
+  dplyr::group_by(game_date) %>%
+  dplyr::summarise(
+    `Average Launch Angle` = mean(launch_angle, na.rm = TRUE), 
+    `Average Batted Ball Speed` = mean(launch_speed, na.rm = TRUE))
+
+betts_grpd$Year <- substr(betts_grpd$game_date, 1, 4) 
+
+betts_grpd %>% select(`Average Launch Angle`, `Average Batted Ball Speed`, Year)
+
+betts_avg_speed_yr <- betts %>%
+  dplyr::group_by(Year) %>%
+  dplyr::summarise(
+    speed = round(mean(launch_speed, na.rm = TRUE),1), 
+    angle = round(mean(launch_angle, na.rm = TRUE),1))
+
+
+```
+
+###Baseball Reference vignette
+```{r baseballreference}
+
+##-- not working atm --##
+
+library(rvest)
+library(plyr)
+library(dplyr)
+library(tidyverse)
+library(magrittr)
+library(xml2)
+library(stringi)
+
+years = c(2013:2019)
+urls = list()
+for(i in 1:length(years)){
+  url = paste0('https://www.baseball-reference.com/leagues/majors/',years[i],'-standard-batting.shtml')
+  urls[[i]]=url
+}
+
+
+tbl = list()
+years = 2013
+j = 1
+
+for(j in seq_along(urls)){
+  
+  #alttable <- read_html(urls[[1]]) 
+  
+  alttable <- read_html("https://www.baseball-reference.com/leagues/majors/2022-standard-batting.shtml")
+  
+  divtable <- alttable %>%
+    html_nodes("div")
+  
+  idtable <- divtable %>%
+    html_nodes("div#div_players_standard_batting")
+  
+
+  tbl[[j]] <- c(alttable)
+  
+  #Attempt 2
+  # alttable <-xml2::xml_find_all(urls[[j]], "//comment()") %>% {
+  #   raw_parts <- as.character(.[grep("\\</?table", as.character(.))])
+  #   strip_html<-stringi::stri_replace_all_regex(raw_parts, c("<\\!--","-->"),c("",""), vectorize_all=FALSE)
+  #   lapply(grep("<table", strip_html, value = TRUE), function(i){
+  #      rvest::html_table(xml_find_all(read_html(i), "//table")) %>% 
+  #     .[[1]]
+  #   })
+  # }
+  
+  #Attempt 1
+  # tbl[[j]] = urls[[j]] %>%
+  #   read_html() %>%
+  #   html_nodes("table") %>%
+  #   html_table()
+  # 
+  tbl[[j]]$Year = years
+  j=j+1
+  years = years+1
+}
+
+MLBbref = ldply(tbl, data.frame)
+MLBbref2 <-subset(MLBbref, Tm!="" & Tm!="League Average" & Tm !="Tm")
+
+```
+
+
+
+### ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Beginning of actual analysis ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~###
+
+
+
+## (!!!Optional!!! - First) Gather all at-bats between start and end date
+```{r acquire knowledge}
+
+start_date = "2022-06-17"
+end_date = "2022-06-17"
+
+
+## Get all stats between start and end dates
+batter_stats <- bref_daily_batter("2022-04-07", end_date) %>%
+  rename(batter_name = Name)
+
+
+pitcher_stats <- daily_pitcher_bref("2022-04-07", end_date) %>%
+  rename(pitcher_name = Name)
+
+
+# Treat start/end dates as Date type for purpose of loop
+loop_start <- as.Date(start_date, format="%Y-%m-%d")
+loop_end <- as.Date(end_date, format="%Y-%m-%d")
+
+
+## Get all play-by-play data on a particular date range; currently filtering for last pitch of at-bat only
+day_to_analyze = loop_start
+game_pks_on_date <- as.data.frame(mlb_game_pks(day_to_analyze))
+all_events_on_date <- mlb_pbp(game_pks_on_date$game_pk[1])%>%
+  filter(last.pitch.of.ab == "true")
+
+
+while(loop_start <= loop_end){
+
+    day_to_analyze = loop_start
+    game_pks_on_date <- as.data.frame(mlb_game_pks(day_to_analyze)) %>%
+      filter(!is.na(isTie))
+  
+  if(loop_start != as.Date(start_date, format="%Y-%m-%d")){
+    temp <- mlb_pbp(game_pks_on_date$game_pk[1])%>%
+      filter(last.pitch.of.ab == "true")
+  }
+  else{
+    temp <- all_events_on_date
+  }
+
+for(i in 2:length(game_pks_on_date$game_pk)){
+  
+game_pbp <- mlb_pbp(game_pks_on_date$game_pk[i])
+temp <- dplyr::bind_rows(temp, game_pbp)
+
+}
+
+    
+all_events_on_date <- dplyr::bind_rows(all_events_on_date, temp)
+loop_start <- loop_start+1
+
+
+}
+
+
+## Get home and away team info for each game_pk
+
+
+season_game_pks <- as.data.frame(mlb_schedule(season = 2022, level_ids = "1")) %>%
+  select(game_pk, teams_away_team_name, teams_home_team_name)
+
+
+###  !!!! start here to recreate at_bat_results from the completed loop. Start at the top if you want to create a new date range to analyze !!!!
+
+at_bat_result <- all_events_on_date
+
+
+
+ytd_at_bat_result <- dplyr::bind_rows(ytd_at_bat_result, at_bat_result)
+all_events_on_date <- ytd_at_bat_result
+
+```
+
+
+
+
+
+### ~~~~~~~~~~~~~~~~~~~ Below here is the stuff you can touch - above takes like 15 mins to run ~~~~~~~~~~~~~~~~~~~~~ ####
+
+
+
+
+### (Second) Generate additional information based on dataset
+```{r add more to at_bat_result}
+
+at_bat_result <- all_events_on_date %>%
+  filter(last.pitch.of.ab == "true")
+
+## Returns number of games that day
+#n_games =length(unique(c(all_events_on_date$game_pk)))
+
+
+## Adds a column for DK points scored from purely a batter/pitcher standpoint (i.e. no steals or other baserunner points considered)
+## Considering those points to be less predictable for now
+at_bat_result <- at_bat_result %>%
+  mutate(batter_dkfps=
+            (result.event == "Single")*3 +
+            (result.event == "Double")*5 +
+            (result.event == "Triple")*8 +
+            (result.event == "Home Run")*12 +
+            (result.event == "Walk")*2 +
+            (result.event == "Hit By Pitch")*2 +
+            result.rbi*2, 
+         pitcher_dkfps=
+            (result.event == "Groundout" | result.event == "Pop Out" | result.event == "Fielders Choice Out" | result.event == "Flyout" | result.event == "Lineout")*.75 +
+            (result.event == "Strikeout")*2.75 -
+            (result.event == "Single"|
+            result.event == "Double"|
+            result.event == "Triple"|
+            result.event == "Walk"|
+            result.event == "Hit By Pitch")*.6 -
+            (result.event == "Home Run")*2.6 -
+            result.rbi*2
+           ) %>%
+  rename(pitcher_name = matchup.pitcher.fullName, batter_name = matchup.batter.fullName)
+
+
+## Add stats across entire date range to at-bat results so those points can be used to predict the outcome of an at-bat
+at_bat_result <- as.data.frame(at_bat_result) %>%
+  select(atBatIndex, game_pk, hitData.trajectory, hitData.hardness, result.event, result.rbi, matchup.batter.id, batter_name, matchup.batSide.code, matchup.pitcher.id, pitcher_name, matchup.pitchHand.code, hitData.launchSpeed, hitData.launchAngle, hitData.totalDistance, batter_dkfps, pitcher_dkfps, batting_team, fielding_team)%>%
+  mutate(uniqueAtBatID = paste(as.character(game_pk), as.character(atBatIndex)))%>%
+  merge(batter_stats, by = "batter_name") %>%
+  merge(pitcher_stats, by = "pitcher_name")
+
+at_bat_result <- at_bat_result %>%
+  distinct(uniqueAtBatID, .keep_all = TRUE)
+
+scheddy <- all_events_on_date %>%
+  select(game_pk, game_date) %>%
+  distinct()
+
+
+## Summarise points for a batter across the date range; currently "mean" for batting points scored and pitching points allowed per at-bat
+full_game_batter_score <- at_bat_result %>%
+  group_by(batter_name) %>%
+  summarise(mean(batter_dkfps), mean(pitcher_dkfps), num_abs = n()) %>%
+  rename(mbdb = "mean(batter_dkfps)", mpdb = "mean(pitcher_dkfps)")
+
+
+## Add handedness to each batter
+bat_hand <- at_bat_result %>%
+  select(batter_name, matchup.batSide.code) %>%
+  group_by(batter_name) %>%
+  summarise(lbats = as.numeric(matchup.batSide.code == "L"), rbats = as.numeric(matchup.batSide.code== "R")) %>%
+  summarise(lbats = sum(lbats), rbats = sum(rbats))
+
+bat_hand$bathand <- case_when(
+  bat_hand$lbats == 0 ~ "R",
+  bat_hand$rbats == 0 ~ "L",
+  TRUE ~ "S"
+)
+
+bat_hand <- bat_hand %>%
+  select(batter_name, bathand)
+
+full_game_batter_score <- full_game_batter_score %>%
+  merge(bat_hand, by = "batter_name")
+
+
+## Summarise points based on handedness
+bats_against_lefties <- at_bat_result %>%
+  group_by(batter_name) %>%
+  filter(matchup.pitchHand.code == "L") %>%
+  summarise(mean(batter_dkfps), mean(pitcher_dkfps), Lnum_abs = n()) %>%
+  rename(mbdbL = "mean(batter_dkfps)", mpdbL = "mean(pitcher_dkfps)")
+
+bats_against_righties <- at_bat_result %>%
+  group_by(batter_name) %>%
+  filter(matchup.pitchHand.code == "R") %>%
+  summarise(mean(batter_dkfps), mean(pitcher_dkfps), Rnum_abs = n()) %>%
+  rename(mbdbR = "mean(batter_dkfps)", mpdbR = "mean(pitcher_dkfps)")
+
+full_game_batter_score <- full_game_batter_score %>%
+  merge(bats_against_lefties, by = "batter_name")%>%
+  merge(bats_against_righties, by = "batter_name")
+
+## Same as above but from a pitcher perspective
+full_game_pitcher_score <- at_bat_result %>%
+  group_by(pitcher_name) %>%
+  summarise(mean(pitcher_dkfps), mean(batter_dkfps), num_abs = n()) %>%
+  rename(mbdp = "mean(batter_dkfps)", mpdp = "mean(pitcher_dkfps)")
+
+pitch_hand <- at_bat_result %>%
+  select(pitcher_name, matchup.pitchHand.code) %>%
+  group_by(pitcher_name) %>%
+  summarise(lpitch = as.numeric(matchup.pitchHand.code == "L"), rpitch = as.numeric(matchup.pitchHand.code== "R")) %>%
+  summarise(lpitch = sum(lpitch), rpitch = sum(rpitch))
+
+pitch_hand$pitchhand <- case_when(
+  pitch_hand$lpitch == 0 ~ "R",
+  pitch_hand$rpitch == 0 ~ "L",
+  TRUE ~ "S"
+)
+
+pitch_hand <- pitch_hand %>%
+  select(pitcher_name, pitchhand)
+
+full_game_pitcher_score <- full_game_pitcher_score %>%
+  merge(pitch_hand, by = "pitcher_name")
+
+ps_against_lefties <- at_bat_result %>%
+  group_by(pitcher_name) %>%
+  filter(matchup.batSide.code == "L") %>%
+  summarise(mean(batter_dkfps), mean(pitcher_dkfps), Lnum_abs = n()) %>%
+  rename(mbdpL = "mean(batter_dkfps)", mpdpL = "mean(pitcher_dkfps)")
+
+ps_against_righties <- at_bat_result %>%
+  group_by(pitcher_name) %>%
+  filter(matchup.batSide.code == "R") %>%
+  summarise(mean(batter_dkfps), mean(pitcher_dkfps), Rnum_abs = n()) %>%
+  rename(mbdpR = "mean(batter_dkfps)", mpdpR = "mean(pitcher_dkfps)")
+
+full_game_pitcher_score <- full_game_pitcher_score %>%
+  merge(ps_against_lefties, by = "pitcher_name")%>%
+  merge(ps_against_righties, by = "pitcher_name")
+
+
+## Add handedness-based information to at_bat_result
+
+at_bat_result <- at_bat_result %>%
+  merge(full_game_batter_score, by = "batter_name")%>%
+  merge(full_game_pitcher_score, by = "pitcher_name")
+
+at_bat_result$exp_batter_earned_fps_by_hand <- case_when(
+  at_bat_result$matchup.pitchHand.code == "R" ~ at_bat_result$mbdbR,
+  at_bat_result$matchup.pitchHand.code == "L" ~ at_bat_result$mbdbL
+)
+
+at_bat_result$exp_pitcher_allowed_fps_by_hand <- case_when(
+  at_bat_result$matchup.batSide.code == "R" ~ at_bat_result$mbdpR,
+  at_bat_result$matchup.batSide.code == "L" ~ at_bat_result$mbdpL,
+  at_bat_result$matchup.batSide.code == "S" ~ max(at_bat_result$mbdpR, at_bat_result$mbdpL)
+  
+)
+
+at_bat_result$exp_batter_allowed_fps_by_hand <- case_when(
+  at_bat_result$matchup.pitchHand.code == "R" ~ at_bat_result$mpdbR,
+  at_bat_result$matchup.pitchHand.code == "L" ~ at_bat_result$mpdbL
+)
+
+at_bat_result$exp_pitcher_earned_fps_by_hand <- case_when(
+  at_bat_result$matchup.batSide.code == "R" ~ at_bat_result$mpdpR,
+  at_bat_result$matchup.batSide.code == "L" ~ at_bat_result$mpdpL,
+  at_bat_result$matchup.batSide.code == "S" ~ max(at_bat_result$mpdpR, at_bat_result$mpdpL)
+)
+
+
+## Linear model projections based on handedness of batter/pitcher
+
+lm_batter_dkfps <- lm(batter_dkfps ~ exp_batter_earned_fps_by_hand + exp_pitcher_allowed_fps_by_hand, data = at_bat_result)
+lm_pitcher_dkfps <- lm(pitcher_dkfps ~ exp_batter_allowed_fps_by_hand + exp_pitcher_earned_fps_by_hand, data = at_bat_result)
+
+## Relevant metrics to consider which did not originally show as predictive (".x" suffix is for batter perspective, ".y" is for pitcher"): + R.x + H.x + X1B.x + X2B.x + X3B.x + HR.x + RBI + BB.x + SO.x + BA + OBP + SLG + OPS + H.y + R.y + BB.y + SO.y + HR.y + ERA + X1B.y + X2B.y + X3B.y + WHIP + SO9
+
+at_bat_result <- at_bat_result %>%
+  merge(season_game_pks, by = "game_pk")
+
+# 
+at_bat_result <- at_bat_result %>%
+  mutate(
+    wOBA = (.693*uBB.x+.725*HBP.x+.891*X1B.x+1.274*X2B.x+1.619*X3B.x+2.097*HR.x)/(AB.x + uBB.x + SF.x + HBP.x),
+    ISO = SLG - BA
+  )
+
+
+
+high_upside_bats <- batters_by_game %>%
+  filter(game_fp >= 14) %>%
+  group_by(batter_name) %>%
+  summarise(big_games = n()) %>%
+  merge(batter_team, by = "batter_name")
+
+
+high_upside_teams <- high_upside_bats %>%
+  group_by(team) %>%
+  summarise(team_big_games = sum(big_games))
+
+
+```
+
+### (Third) Park factor data
+```{r fps based on home team}
+
+Rbat_stats <- at_bat_result %>%
+  filter(matchup.batSide.code == "R") %>%
+  select(teams_home_team_name, batter_dkfps, pitcher_dkfps) %>%
+  group_by(teams_home_team_name) %>%
+  summarise(park_av_batter_ppab_R = mean(batter_dkfps), park_av_pitcher_ppab_ag_R = mean(pitcher_dkfps))
+
+Lbat_stats <- at_bat_result %>%
+  filter(matchup.batSide.code == "L") %>%
+  select(teams_home_team_name, batter_dkfps, pitcher_dkfps) %>%
+  group_by(teams_home_team_name) %>%
+  summarise(park_av_batter_ppab_L = mean(batter_dkfps), park_av_pitcher_ppab_ag_L = mean(pitcher_dkfps))
+
+Rpitch_stats <- at_bat_result %>%
+  filter(matchup.pitchHand.code == "R") %>%
+  select(teams_home_team_name, batter_dkfps, pitcher_dkfps) %>%
+  group_by(teams_home_team_name) %>%
+  summarise(park_av_batter_ppab_ag_R = mean(batter_dkfps), park_av_pitcher_ppab_R = mean(pitcher_dkfps))
+
+Lpitch_stats <- at_bat_result %>%
+  filter(matchup.pitchHand.code == "L") %>%
+  select(teams_home_team_name, batter_dkfps, pitcher_dkfps) %>%
+  group_by(teams_home_team_name) %>%
+  summarise(park_av_batter_ppab_ag_L = mean(batter_dkfps), park_av_pitcher_ppab_L = mean(pitcher_dkfps))
+
+home_ballpark_stats <- merge(Rbat_stats, Lbat_stats, by = "teams_home_team_name") %>%
+  merge(Rpitch_stats, by = "teams_home_team_name") %>%
+  merge(Lpitch_stats, by = "teams_home_team_name")
+
+at_bat_result <- merge(at_bat_result, home_ballpark_stats, by = "teams_home_team_name")
+
+at_bat_result$park_adj_batter_exp <- case_when(
+  at_bat_result$matchup.batSide.code == "R" ~ at_bat_result$park_av_batter_ppab_R,
+  at_bat_result$matchup.batSide.code == "L" ~ at_bat_result$park_av_batter_ppab_L
+)
+
+at_bat_result$park_adj_pitcher_ag_hand_exp <- case_when(
+  at_bat_result$matchup.batSide.code == "R" ~ at_bat_result$park_av_pitcher_ppab_ag_R,
+  at_bat_result$matchup.batSide.code == "L" ~ at_bat_result$park_av_pitcher_ppab_ag_L
+)
+
+at_bat_result$park_adj_pitcher_exp <- case_when(
+  at_bat_result$matchup.pitchHand.code == "R" ~ at_bat_result$park_av_pitcher_ppab_R,
+  at_bat_result$matchup.pitchHand.code == "L" ~ at_bat_result$park_av_pitcher_ppab_L
+)
+
+at_bat_result$park_adj_batter_ag_hand_exp <- case_when(
+  at_bat_result$matchup.pitchHand.code == "R" ~ at_bat_result$park_av_batter_ppab_ag_R,
+  at_bat_result$matchup.pitchHand.code == "L" ~ at_bat_result$park_av_batter_ppab_ag_L
+)
+
+
+
+```
+
+### (4.A) Derive factors for pitchers to apply to at_bat_result which are a match to those in todays_starters
+```{r pitcher derivations}
+
+pitcher_longevity <- at_bat_result %>%
+  group_by(pitcher_name, game_pk) %>%
+  summarise(at_bats = n())
+
+at_bat_result$upgID <- paste(at_bat_result$pitcher_name, at_bat_result$game_pk)
+pitcher_longevity$upgID <- paste(pitcher_longevity$pitcher_name, pitcher_longevity$game_pk)
+
+pitcher_longevity <- pitcher_longevity %>%
+  select(pitcher_name, upgID, at_bats)
+
+at_bat_result <- at_bat_result %>%
+  merge(pitcher_longevity, by = "upgID", all.x = TRUE) %>%
+  select(-upgID)
+
+pitcher_longevity <- at_bat_result %>%
+  rename(pitcher_name = pitcher_name.x) %>%
+  select(pitcher_name, game_pk, at_bats) %>%
+  group_by(pitcher_name) %>%
+  summarise(mean_batters_faced = mean(at_bats), min_batters_faced = min(at_bats), max_batters_faced = max(at_bats))
+
+at_bat_result <- at_bat_result %>%
+  rename(pitcher_name = pitcher_name.x)%>%
+  merge(pitcher_longevity, by = "pitcher_name")
+
+at_bat_result <- at_bat_result%>%
+  mutate(
+    bats_L_factors = mbdpL * park_av_batter_ppab_L,
+    bats_R_factors = mbdpR * park_av_batter_ppab_R,
+    pitch_L_factors = mpdpL * park_av_pitcher_ppab_L,
+    pitch_R_factors = mpdpR * park_av_pitcher_ppab_R
+  ) 
+
+at_bat_result$sum_bat_factors <- at_bat_result$bats_L_factors+at_bat_result$bats_R_factors
+at_bat_result$sum_pitch_factors <- at_bat_result$pitch_L_factors+at_bat_result$pitch_R_factors
+
+at_bat_result$mean_projection <- at_bat_result$sum_pitch_factors*at_bat_result$mean_batters_faced
+at_bat_result$ceiling_projection <- at_bat_result$sum_pitch_factors*at_bat_result$max_batters_faced
+
+
+
+
+```
+
+
+### (Fourth) Pitchers by game
+```{r project pitcher scoring by game}
+
+# pitchers_by_game<-c()
+
+pitchers_by_game <- at_bat_result %>%
+  group_by(pitcher_name, game_pk) %>%
+  summarise(game_fp = sum(pitcher_dkfps), at_bats = n(), sum(batter_dkfps), ob_av_pts_ag = mean(mbdb), mpdb = mean(mpdb), park_adjust = mean(park_adj_pitcher_exp), park_ag_bat = mean(park_adj_batter_ag_hand_exp), SO_perc = mean(SO_perc), opp_woba = mean(wOBA), opp_ISO = mean(ISO), b_allowed_fps = mean(exp_batter_allowed_fps_by_hand), p_earned_fps = mean(exp_pitcher_earned_fps_by_hand), sum_bat_factors = mean(sum_bat_factors), sum_pitch_factors = mean(sum_pitch_factors), mean_projection = mean(mean_projection), ceiling_projection = mean(ceiling_projection)) %>%
+  merge(full_game_pitcher_score, by = "pitcher_name") %>%
+  select(-num_abs) %>%
+  merge(pitcher_stats, by = "pitcher_name", all.x = TRUE) %>%
+  merge(pitcher_longevity, by = "pitcher_name", all.x= TRUE)
+
+
+
+
+
+#full_game_pitcher_score <- merge(x = full_game_pitcher_score, y= pitcher_longevity, by = "pitcher_name")
+
+
+# short_gamers <- pitchers_by_game %>%
+#   filter(max_batters_faced < 15)
+# 
+# long_gamers <- pitchers_by_game %>%
+#   filter(max_batters_faced >=15)
+# 
+# 
+# #different formula for those facing <15 batters at a time
+# 
+# lm_pitcher_full_game_short <- lm(game_fp ~ ERA * ob_av_pts_ag * mpdb * mpdp * park_adjust *mean_batters_faced * b_allowed_fps * p_earned_fps , data = short_gamers)
+# summary(lm_pitcher_full_game_short)
+# 
+# short_gamers %>%
+#   ggplot(aes(x=mpdp, y=game_fp)) +
+#   geom_point()
+# 
+# 
+# 
+# 
+# lm_pitcher_full_game <- lm(game_fp ~ SO_perc.x * (H + HR + ERA+AB + mean_batters_faced + SO + BB) * (ob_av_pts_ag + mpdb + b_allowed_fps + opp_woba + opp_ISO)  * (mpdp + p_earned_fps) * park_adjust , data = long_gamers)
+# summary(lm_pitcher_full_game)
+# Adjusted R-squared:  0.5085
+
+### may be a good idea to bin by "max batters faced" to delineate between starters and relievers
+
+
+mad_pitcher_fps <- pitchers_by_game %>%
+  group_by(pitcher_name)%>%
+  summarise(mad_fps = mad(game_fp), sd_fps = sd(game_fp))
+
+pitchers_by_game <- pitchers_by_game %>%
+  merge(mad_pitcher_fps, by = "pitcher_name", all.x = TRUE)
+
+
+
+# Best model yet but so many variables
+# # 
+lm_pitcher_full_game <- lm(game_fp ~ (mpdp + park_adjust + b_allowed_fps + p_earned_fps + sum_pitch_factors + H + HR + ERA + mean_batters_faced + IP + SO) / ( mad_fps + sum_bat_factors) , data = pitchers_by_game)
+summary(lm_pitcher_full_game)
+# Adjusted R-squared:  0.3606
+
+preds <- predict(lm_pitcher_full_game, pitchers_by_game)
+
+pitchers_by_game$pred <- preds
+
+lm_pitcher_second_level <- lm(game_fp ~ pred + mean_projection + ceiling_projection + sum_pitch_factors, data = pitchers_by_game)
+summary(lm_pitcher_second_level)
+# Adjusted R-squared:  0.3851
+
+
+pitchers_by_game %>%
+  ggplot(aes(x=pred, y=game_fp)) +
+  geom_point()
+
+test_pred_manipulation <- pitchers_by_game %>%
+  select(pred, game_fp) %>%
+  mutate(newpred = (10 + pred)/2+5)
+
+
+test_pred_manipulation %>%
+  ggplot(aes(x=newpred, y=game_fp)) +
+  geom_point()
+
+
+```
+
+### (Fifth) Derived factors
+```{r EMA/rhythm/variance}
+
+
+batters_by_game <- at_bat_result %>%
+  group_by(batter_name, game_pk) %>%
+  summarise(sum(batter_dkfps), at_bats = n(), sum(pitcher_dkfps), sum(mbdb), sum(mbdp), park_adjust = mean(park_adj_batter_exp), park_ag_pitch = mean(park_adj_batter_ag_hand_exp), exp_batter_earned_fps_by_hand = mean(exp_batter_earned_fps_by_hand), exp_pitcher_allowed_fps_by_hand = mean(exp_pitcher_allowed_fps_by_hand), homers = max(HR.x), BA = mean(BA), SLG = mean(SLG), OPS = mean(OPS), opERA = mean(ERA), op_SO_perc = mean(SO_perc), opWHIP = mean(WHIP), wOBA = mean(wOBA), ISO = mean(ISO), babip = mean(BAbip)) %>%
+  merge(full_game_batter_score, by = "batter_name") %>%
+  rename(
+    op_fp = "sum(pitcher_dkfps)",
+    game_fp = "sum(batter_dkfps)",
+    av_pts_ab = "sum(mbdb)",
+    op_av_pts_allow = "sum(mbdp)"
+    
+  ) %>%
+  select(-num_abs)
+# 
+# Warning in temp_vector[j] <- period_fps :
+#   number of items to replace is not a multiple of replacement length
+
+
+### Adds rhythm
+
+constant_ndtc = 5
+constant_sga = 12
+
+list_of_batter_names <- batters_by_game %>%
+  select(batter_name) %>%
+  distinct()
+
+temp_batter_name = list_of_batter_names$batter_name[1]
+
+player_games <- batters_by_game %>%
+  filter(batter_name == temp_batter_name) %>%
+  mutate(rhythm_score = NA)
+
+n_days_to_consider = constant_ndtc
+starting_games_ago = constant_sga
+
+
+for(j in starting_games_ago:length(player_games$batter_name)){
+  period_fps = 0
+  
+  for(k in 1:n_days_to_consider){
+    period_fps = period_fps + player_games$game_fp[j - starting_games_ago + k]
+    
+  }
+  player_games$rhythm_score[j] <- period_fps
+  
+  n_days_to_consider = constant_ndtc
+  starting_games_ago = constant_sga
+}
+
+
+bbg_w_rhythm <- player_games
+
+for(i in 2:length(list_of_batter_names$batter_name)){
+
+  temp_batter_name = list_of_batter_names$batter_name[i]
+
+player_games <- batters_by_game %>%
+  filter(batter_name == temp_batter_name) %>%
+  mutate(rhythm_score = NA)
+
+n_days_to_consider = constant_ndtc
+starting_games_ago = constant_sga
+
+
+for(j in starting_games_ago:length(player_games$batter_name)){
+  tryCatch({period_fps = 0
+  
+  for(k in 1:n_days_to_consider){
+    period_fps = period_fps + player_games$game_fp[j - starting_games_ago + k]
+    
+  }
+  player_games$rhythm_score[j] = period_fps
+  
+  n_days_to_consider = constant_ndtc
+  starting_games_ago = constant_sga
+  }, error=function(e){})
+}
+tryCatch({
+
+bbg_w_rhythm <- bind_rows(bbg_w_rhythm, player_games)
+}, error=function(e){})
+}
+
+
+
+
+
+
+
+
+### Adds EMA for dkfps for batters to batters_by_game; adjust period for EMA where the number is located in the notated sections below:
+list_of_batter_names <- batters_by_game %>%
+  select(batter_name) %>%
+  distinct()
+
+temp_batter_name = list_of_batter_names$batter_name[1]
+
+player_games <- batters_by_game %>%
+  filter(batter_name == temp_batter_name) %>%
+  mutate(fp_ema = NA, fp_ema_back = NA)
+
+player_games$fp_ema <- EMA(player_games$game_fp, 7) ### period length is 7 for EMA
+
+
+for(j in 2:length(player_games$fp_ema)){
+
+  player_games$fp_ema_back[j] <- player_games$fp_ema[j-1]
+}
+
+player_games$fp_ema <- player_games$fp_ema_back
+
+player_games <- player_games %>%
+  select(-fp_ema_back)
+
+
+bbg_w_ema <- player_games
+
+### Run the above through a loop to do it for every batter
+
+for(i in 2:length(list_of_batter_names$batter_name)){
+  
+  tryCatch({
+  temp_batter_name = list_of_batter_names$batter_name[i]
+
+  player_games <- batters_by_game %>%
+  filter(batter_name == temp_batter_name)%>%
+  mutate(fp_ema = NA, fp_ema_back = NA)
+
+  player_games$fp_ema <- EMA(player_games$game_fp, 7) ### period length is 7 for EMA
+
+
+for(j in 2:length(player_games$fp_ema)){
+
+  player_games$fp_ema_back[j] = player_games$fp_ema[j-1]
+}
+
+player_games$fp_ema <- player_games$fp_ema_back
+
+player_games <- player_games %>%
+  select(-fp_ema_back)
+
+  bbg_w_ema <- dplyr::bind_rows(bbg_w_ema, player_games)
+  }, error=function(e){})
+}
+
+
+
+
+
+
+### Calculating variance for each batter
+
+list_of_batter_names <- batters_by_game %>%
+  select(batter_name) %>%
+  distinct()
+
+temp_batter_name = list_of_batter_names$batter_name[1]
+
+player_games <- batters_by_game %>%
+  filter(batter_name == temp_batter_name) %>%
+  mutate(player_var_fp = NA)
+
+player_games$player_var_fp <- var(player_games$game_fp)
+
+bbg_w_var <- player_games
+
+for(i in 2:length(list_of_batter_names$batter_name)){
+  
+  temp_batter_name = list_of_batter_names$batter_name[i]
+
+  player_games <- batters_by_game %>%
+  filter(batter_name == temp_batter_name)%>%
+  mutate(player_var_fp = NA)
+
+  player_games$player_var_fp <- var(player_games$game_fp)
+
+  bbg_w_var <- dplyr::bind_rows(bbg_w_var, player_games)
+}
+
+bbg_w_var <- bbg_w_var %>%
+  filter(!is.na(player_var_fp))
+
+bbg_w_var$inv_var <- 1/bbg_w_var$player_var_fp
+
+
+
+### summarise by full date range:
+
+batters_by_period <- batters_by_game %>%
+  group_by(batter_name) %>%
+  summarise(av_pts_ab = mean(av_pts_ab), op_av_pts_allow = mean(op_av_pts_allow))
+
+batters_by_game <- batters_by_game %>%
+  select(-av_pts_ab, -op_av_pts_allow) %>%
+  merge(batters_by_period, by = "batter_name")
+
+batters_by_game <- batters_by_game %>%
+  mutate(ugID = paste(batter_name, game_pk))
+
+### get rid of NAs etc.
+
+# do this once everything is in batters_by_game
+# 
+# bbg_w_rhythm <- bbg_w_rhythm %>%
+#   filter(!is.na(rhythm_score))
+
+bbg_w_var <- bbg_w_var %>%
+  filter(!is.na(player_var_fp), player_var_fp != 0) %>%
+  mutate(ugID = paste(batter_name, game_pk))
+
+bbg_w_var$inv_var <- 1/bbg_w_var$player_var_fp
+
+bbg_w_var <- bbg_w_var  %>%
+  select(ugID, inv_var)
+# 
+# batters_by_game <- bbg_w_ema %>%
+#   filter(!is.na(fp_ema))
+
+
+bbg_w_ema <- bbg_w_ema %>%
+  mutate(ugID = paste(batter_name, game_pk)) %>%
+  select(ugID, fp_ema)
+
+bbg_w_rhythm <- bbg_w_rhythm%>%
+  mutate(ugID = paste(batter_name, game_pk)) %>%
+  select(ugID, rhythm_score)
+
+batters_by_game <- batters_by_game %>%
+  merge(bbg_w_var, by = "ugID", all.x = TRUE) %>%
+  merge(bbg_w_ema, by = "ugID", all.x = TRUE) %>%
+  merge(bbg_w_rhythm, by = "ugID", all.x = TRUE)
+
+mad_batter_fps <- batters_by_game %>%
+  group_by(batter_name)%>%
+  summarise(mad_fps = mad(game_fp))
+
+batters_by_game <- batters_by_game %>%
+  merge(mad_batter_fps, by = "batter_name", all.x = TRUE)
+
+```
+
+
+### (Sixth) batters by game
+```{r hitter preds}
+
+batters_by_game <- batters_by_game %>%
+  filter(!is.na(fp_ema), !is.na(rhythm_score))
+
+p_by_game_preds <- pitchers_by_game %>%
+  group_by(game_pk) %>%
+  summarise(pitcher_pred = max(pred))
+
+batters_by_game <- batters_by_game %>%
+  merge(p_by_game_preds, by = "game_pk") %>%
+  merge(high_upside_bats, by = "batter_name")
+  
+batters_by_game$inv_pitcher_pred <- 1/batters_by_game$pitcher_pred
+
+# 
+# lm_batter_full_game <- lm(game_fp ~ sqrt(inv_var) * (av_pts_ab + sqrt(exp_batter_earned_fps_by_hand) + big_games)*( fp_ema  + rhythm_score) * (sqrt(exp_pitcher_allowed_fps_by_hand) + inv_pitcher_pred) * park_adjust , data = batters_by_game)
+# summary(lm_batter_full_game)
+
+lm_batter_full_game <- lm(game_fp ~ av_pts_ab + exp_batter_earned_fps_by_hand + exp_pitcher_allowed_fps_by_hand + park_adjust + fp_ema + rhythm_score, data = batters_by_game)
+summary(lm_batter_full_game)
+# Adjusted R-squared:  Adjusted R-squared:  0.1073
+
+preds <- predict(lm_batter_full_game, batters_by_game)
+
+batters_by_game$pred <- preds
+
+batters_by_game %>%
+  ggplot(aes(x=pred, y=game_fp)) +
+  geom_point()
+
+batter_team <- all_events_on_date %>%
+  select(matchup.batter.fullName, batting_team) %>%
+  rename(batter_name = matchup.batter.fullName, team = batting_team) %>%
+  distinct()
+
+teams_by_game <- batters_by_game %>%
+  merge(batter_team, by = "batter_name") %>%
+  rename(team = team.x) %>%
+  group_by(team, game_pk) %>%
+  summarise(team_fp = sum(game_fp), total_op_fp = sum(op_fp), team_w_av_abs = sum(av_pts_ab), op_w_av_abs = sum(op_av_pts_allow), team_av_per_ab = mean(mbdb), op_av_per_ab = mean(mpdb), park_adjust = mean(park_adjust), park_ag_pitch = sum(park_ag_pitch), sum_preds = sum(pred), mean_woba = median(wOBA), mean_ISO = median(ISO), rhythm_score = mean(rhythm_score), fp_ema = mean(fp_ema), team_abs = sum(at_bats)) 
+
+
+teams_by_game$op_allowed_fps_per_ab <- teams_by_game$total_op_fp/teams_by_game$team_abs
+
+lm_team_full_game <- lm(team_fp ~ sum_preds + park_ag_pitch + rhythm_score + fp_ema, data = teams_by_game)
+summary(lm_team_full_game)
+#Adjusted R-squared:  0.3399
+
+preds <- predict(lm_team_full_game, teams_by_game)
+
+teams_by_game$pred <-preds
+
+teams_by_game %>%
+  ggplot(aes(x=pred, y=team_fp)) +
+  geom_point()
+
+### !!! Let's try predicting team FPs next and see if we can get a better adjusted R2 !!! ###
+
+
+
+```
+
+
+
+
+#### (Sixth) Get Starting Pitchers
+```{r get starters}
+
+today = "2022-06-18"
+
+
+home_teams_on_slate <- c("Boston Red Sox", "Los Angeles Dodgers", "Colorado Rockies", "Arizona Diamondbacks", "Seattle Mariners")
+
+todays_game_pks <- as.data.frame(mlb_schedule(season = 2022, level_ids = "1")) %>%
+  filter(date == today) %>%
+  select(game_pk, teams_away_team_name, teams_home_team_name)
+
+todays_starters <- as.data.frame(mlb_probables(todays_game_pks$game_pk[1]))
+
+for(i in 2:nrow(todays_game_pks)){
+  
+  temp_row <- mlb_probables(todays_game_pks$game_pk[i])
+  
+  todays_starters <- dplyr::bind_rows(todays_starters, temp_row)
+  
+}
+
+todays_starters <- unique(todays_starters) %>%
+  rename(pitcher_name = fullName)
+
+todays_starters <-  todays_starters %>%
+  merge(full_game_pitcher_score, by = "pitcher_name", all.x = TRUE) %>%
+  filter(!is.na(pitcher_name)) 
+
+todays_starters <-  todays_starters%>%
+  merge(season_game_pks, by = "game_pk", all.x = TRUE)
+
+todays_starters <- merge(todays_starters, home_ballpark_stats, by = "teams_home_team_name", all.x = TRUE)
+ 
+ mpdb_for_opp_bats <- at_bat_result %>%
+   group_by(batting_team) %>%
+   summarise(mpdb  = mean(mpdb))
+ 
+ team_abs <- at_bat_result %>%
+   group_by(batting_team) %>%
+   summarise(n_abs = n())
+ 
+ team_hrs <- at_bat_result %>%
+   filter(result.event == "Home Run") %>%
+   group_by(batting_team) %>%
+   summarise(n_hrs = n())
+ 
+ team_ks <- at_bat_result %>%
+   filter(result.event == "Strikeout") %>%
+   group_by(batting_team) %>%
+   summarise(n_ks = n())
+
+ team_abs <- team_abs %>%
+   merge(team_hrs, by = "batting_team", all.x = TRUE)%>%
+   merge(team_ks, by = "batting_team", all.x = TRUE)
+ 
+ team_abs$hr_pct <- team_abs$n_hrs / team_abs$n_abs
+ team_abs$k_pct <- team_abs$n_ks / team_abs$n_abs
+ 
+ team_abs <- team_abs %>%
+   select(-n_hrs, -n_ks, -n_abs)
+ 
+todays_starters$batting_team <- case_when(
+  todays_starters$teams_home_team_name ==  todays_starters$team ~ todays_starters$teams_away_team_name, 
+  todays_starters$teams_away_team_name ==  todays_starters$team ~ todays_starters$teams_home_team_name
+)
+
+todays_starters <- merge(todays_starters, mpdb_for_opp_bats, by = "batting_team", all.x = TRUE)
+
+todays_starters$park_adjust <- case_when(
+  todays_starters$pitchhand == "R" ~ todays_starters$park_av_pitcher_ppab_R,
+  todays_starters$pitchhand == "L" ~ todays_starters$park_av_pitcher_ppab_L
+)
+
+todays_starters$park_ag_bat <- case_when(
+  todays_starters$pitchhand == "R" ~ todays_starters$park_av_batter_ppab_ag_R,
+  todays_starters$pitchhand == "L" ~ todays_starters$park_av_batter_ppab_ag_L
+)
+ 
+todays_starters <- todays_starters %>%
+  merge(pitcher_stats, by = "pitcher_name", all.x= TRUE)
+
+team_bats_for_p_preds <- teams_by_game %>%
+  group_by(team) %>%
+  summarise(avg_fps = mean(team_fp), ob_av_pts_ag = mean(op_av_per_ab), b_allowed_fps = mean(op_allowed_fps_per_ab)) %>%
+  rename(batting_team = team)
+ 
+todays_starters <- todays_starters %>%
+  merge(team_bats_for_p_preds, by = "batting_team", all.x = TRUE)
+
+p_earned_fps_df <- pitchers_by_game %>%
+  group_by(pitcher_name) %>%
+  summarise(p_earned_fps = mean(p_earned_fps))
+
+todays_starters <- todays_starters %>%
+  merge(p_earned_fps_df, by = "pitcher_name")
+
+todays_starters <- todays_starters %>%
+  merge(pitcher_longevity, by = "pitcher_name")
+
+todays_starters <- todays_starters %>%
+  merge(mad_pitcher_fps, by = "pitcher_name", all.x = TRUE)
+
+
+todays_starters <- todays_starters %>%
+  merge(pitcher_longevity, by = "pitcher_name")
+
+todays_starters <- todays_starters%>%
+  mutate(
+    bats_L_factors = (2 + mbdpL) * park_av_batter_ppab_L/ 2,
+    bats_R_factors = (2 + mbdpR) * park_av_batter_ppab_R/ 2,
+    pitch_L_factors =(2 +  mpdpL) * park_av_pitcher_ppab_L/ 2,
+    pitch_R_factors = (2 + mpdpR) * park_av_pitcher_ppab_R/ 2
+  ) 
+# %>%
+#   select(pitcher_name, team, batting_team, pitchhand, preds, bats_L_factors, bats_R_factors, pitch_L_factors, pitch_R_factors, mean_batters_faced.y, min_batters_faced.y, max_batters_faced.y)
+
+todays_starters$sum_bat_factors <- todays_starters$bats_L_factors+todays_starters$bats_R_factors
+todays_starters$sum_pitch_factors <- todays_starters$pitch_L_factors+todays_starters$pitch_R_factors
+
+todays_starters$mean_projection <- todays_starters$sum_pitch_factors*todays_starters$mean_batters_faced.y
+todays_starters$ceiling_projection <- todays_starters$sum_pitch_factors*todays_starters$max_batters_faced.y
+# 
+# tryCatch({
+  todays_starters <- todays_starters %>%
+    rename(mean_batters_faced = mean_batters_faced.x)
+# })
+
+
+todays_starters$preds <- predict(lm_pitcher_full_game, todays_starters)
+
+todays_starters <- todays_starters %>%
+  filter(teams_home_team_name %in% home_teams_on_slate)
+
+ts_hold <- todays_starters
+
+```
+
+
+### Team performance (Generates tsr_summary and psr_summary, which give optimal and top 3 %s for teams and pitchers)
+```{r team perf}
+
+### top half is team batting, bottom half is pitching
+
+todays_starters <- ts_hold
+todays_starters$preds <- (10+todays_starters$preds)/2 + 5
+
+rm(batting_teams_merged_stats)
+batting_teams_merged_stats <- recent_stats %>%
+  filter(team %in% todays_starters$batting_team) %>%
+  select(team, batter_name, bathand, av_pts_ab, mbdbL, mbdbR, fp_ema, big_games, rhythm_score, mad_fps) %>%
+  rename(batting_team = team) %>%
+  merge(todays_starters, by = "batting_team") %>%
+  merge(Rbat_stats, by = "teams_home_team_name") %>%
+  merge(Lbat_stats, by = "teams_home_team_name") 
+
+batting_teams_merged_stats <-batting_teams_merged_stats %>%
+  mutate(park_adjust =
+           case_when(
+             bathand == "R" ~ batting_teams_merged_stats$park_av_batter_ppab_R.y,
+             bathand == "L" ~ batting_teams_merged_stats$park_av_batter_ppab_L.y,
+             bathand == "S" ~ max(batting_teams_merged_stats$park_av_batter_ppab_R.y, batting_teams_merged_stats$park_av_batter_ppab_L.y)
+           ),
+         exp_batter_earned_fps_by_hand = 
+           case_when(
+             pitchhand == "R" ~ batting_teams_merged_stats$mbdpR,
+             pitchhand == "L" ~ batting_teams_merged_stats$mbdpL,
+             ),
+         exp_pitcher_allowed_fps_by_hand =
+           case_when(
+             bathand == "R" ~ batting_teams_merged_stats$mbdpR,
+             bathand == "L" ~ batting_teams_merged_stats$mbdpL,
+             bathand == "S" ~ max(batting_teams_merged_stats$mbdpR, batting_teams_merged_stats$mbdpL)
+           )
+          )
+
+batting_teams_merged_stats <-batting_teams_merged_stats %>%
+  merge(mad_batter_fps, by = "batter_name")
+
+
+preds <- predict(lm_batter_full_game, batting_teams_merged_stats)
+
+batting_teams_merged_stats$pred <- preds
+
+simplified_sum <- batting_teams_merged_stats %>%
+  select(batting_team, batter_name, pred)
+
+simplified_sum <- simplified_sum %>%
+  group_by(batting_team) %>%
+  summarise(adjustment = median(pred))
+
+
+
+team_performance <- at_bat_result %>%
+  group_by(batting_team, game_pk) %>%
+  summarise(earned_batter_fps = sum(batter_dkfps),  allowed_pitcher_fps = sum(pitcher_dkfps), homers = sum(result.event == "Home Run"), strikeouts = sum(result.event == "Strikeout"))
+
+team_deviation <- team_performance %>%
+  group_by(batting_team) %>%
+  summarise(bats_sd = sd(as.numeric(earned_batter_fps), na.rm = TRUE), op_sd = sd(as.numeric(allowed_pitcher_fps), na.rm = TRUE))
+
+team_performance <- team_performance %>%
+  group_by(batting_team) %>%
+  summarise(earned_batter_fps = mean(earned_batter_fps), allowed_pitcher_fps = mean(allowed_pitcher_fps), homers = mean(homers), strikeouts = mean(strikeouts)) %>%
+  merge(simplified_sum, by = "batting_team") %>%
+    merge(team_deviation, by = "batting_team") %>%
+  mutate(earned_batter_fps = earned_batter_fps + adjustment)
+
+
+# %>%
+#   filter(batting_team == "Arizona Diamondbacks" |batting_team == "Atlanta Braves" | batting_team == "Baltimore Orioles" | batting_team == "Boston Red Sox"|  batting_team == "Chicago White Sox" |batting_team == "Chicago Cubs" |batting_team == "Cincinnati Reds" |  batting_team == "Detroit Tigers" |batting_team == "Houston Astros"|batting_team == "Kansas City Royals" | batting_team == "Miami Marlins"|batting_team == "Milwaukee Brewers"|batting_team == "Minnesota Twins"|batting_team == "New York Yankees" | batting_team == "Philadelphia Phillies" |batting_team == "Pittsburgh Pirates" |batting_team == "St. Louis Cardinals" |batting_team == "Tampa Bay Rays"|batting_team == "Texas Rangers"|batting_team == "Toronto Blue Jays"|batting_team == "Washington Nationals")
+  
+  
+  # List of all teams to filter by for analysis
+  #
+  # filter(batting_team == "Arizona Diamondbacks" |batting_team == "Atlanta Braves" | batting_team == "Baltimore Orioles" | batting_team == "Boston Red Sox"|  batting_team == "Chicago White Sox" |batting_team == "Chicago Cubs" |batting_team == "Cincinnati Reds" | batting_team == "Cleveland Guardians" | batting_team == "Colorado Rockies"| batting_team == "Detroit Tigers" |batting_team == "Houston Astros"|batting_team == "Kansas City Royals" | batting_team == "Los Angeles Angels" |batting_team == "Los Angeles Dodgers" | batting_team == "Miami Marlins"|batting_team == "Milwaukee Brewers"|batting_team == "Minnesota Twins"|batting_team == "New York Yankees" |batting_team == "New York Mets"|batting_team == "Oakland Athletics"| batting_team == "Philadelphia Phillies" |batting_team == "Pittsburgh Pirates" |batting_team == "San Diego Padres"|batting_team == "San Francisco Giants" | batting_team == "Seattle Mariners" |batting_team == "St. Louis Cardinals" |batting_team == "Tampa Bay Rays"|batting_team == "Texas Rangers"|batting_team == "Toronto Blue Jays"|batting_team == "Washington Nationals")
+
+
+
+
+
+### simulation of pitching results based on projection and standard deviation; sim_length is number of simulations to run
+# 
+sim_length = 10000
+#rm(team_bats_simulation)
+team_bats_simulation <- rnorm(sim_length, mean = team_performance$earned_batter_fps[1], sd = team_performance$bats_sd[1])
+
+for(i in 2:length(team_performance$earned_batter_fps)){
+practice_vector <- rnorm(sim_length, mean = team_performance$earned_batter_fps[i], sd = team_performance$bats_sd[i])
+team_bats_simulation <- cbind(team_bats_simulation, practice_vector)
+}
+
+team_vector <- team_performance$batting_team
+colnames(team_bats_simulation) <- team_vector
+
+# find ranks
+team_sim_rank <- t(apply(-team_bats_simulation, 1, rank))
+team_sim_rank <- t(team_sim_rank)
+# add to your dates
+#pitcher_simulation.rank <- cbind(pitcher_simulation[1], t(apply(-pitcher_simulation, 1, rank)))
+
+rm(ones_vector)
+rm(twos_vector)
+rm(threes_vector)
+
+
+ones_vector <- vector("numeric", length(team_vector))
+twos_vector <- vector("numeric", length(team_vector))
+threes_vector <- vector("numeric", length(team_vector))
+
+for(i in 1:length(team_sim_rank)){
+  
+if(i %% length(team_vector) == 0){
+  if(team_sim_rank[i] == 1){
+    ones_vector[length(team_vector) ] <- ones_vector[ length(team_vector)] + 1
+  }
+  if(team_sim_rank[i] == 2){
+    twos_vector[length(team_vector) ] <- twos_vector[length(team_vector)] + 1
+  }
+  if(team_sim_rank[i] == 3){
+    threes_vector[length(team_vector) ] <- threes_vector[length(team_vector)] + 1
+  }
+}
+else{
+  if(team_sim_rank[i] == 1){
+    ones_vector[i %% length(team_vector) ] <- ones_vector[i %% length(team_vector)] + 1
+  }
+  if(team_sim_rank[i] == 2){
+    twos_vector[i %% length(team_vector) ] <- twos_vector[i %% length(team_vector)] + 1
+  }
+  if(team_sim_rank[i] == 3){
+    threes_vector[i %% length(team_vector) ] <- threes_vector[i %% length(team_vector)] + 1
+  }
+}
+
+}
+team_sim_rank <- t(team_sim_rank)
+
+
+tsr_summary <-  t(data.frame(ones_vector,twos_vector,threes_vector))
+
+colnames(tsr_summary) <- team_vector
+
+tsr_summary <- t(tsr_summary)
+
+tsr_summary <- as.data.frame(tsr_summary)
+
+tsr_summary <- tsr_summary%>%
+  mutate(optimal = ones_vector/sim_length*100, top_three = (ones_vector+twos_vector+threes_vector)/(sim_length)*100)
+
+
+
+
+#### todays_pitchers moved here
+
+todays_starters <- merge(x = todays_starters, y = team_performance, by = "batting_team")
+
+todays_starters <- todays_starters %>%
+  distinct()
+
+
+# scale_check_pbg <- pitchers_by_game %>%
+#   select(H , HR , ERA , ob_av_pts_ag , mpdb , mpdp , park_adjust , mean_batters_faced , IP , b_allowed_fps , p_earned_fps)
+
+todays_pitchers <-todays_starters %>%
+   select(pitcher_name, team, batting_team, teams_home_team_name, preds, sd_fps, sum_bat_factors, sum_pitch_factors, mean_projection, ceiling_projection, homers, strikeouts) 
+# %>%
+#  filter(teams_home_team_name %in% home_teams_on_slate)
+# 
+### uncomment above to filter by slate, defined at top of section
+
+
+p_avg_fps <- pitchers_by_game %>%
+  group_by(pitcher_name)%>%
+  summarise(med_fp = median(game_fp), szn_sd = sd(game_fp))
+
+todays_pitchers <- todays_pitchers %>%
+  merge(p_avg_fps, by = "pitcher_name") %>%
+  mutate(preds = (preds*.5 + med_fp*.3 + mean_projection*.2), sd_fps = (szn_sd + sd_fps)/2)
+
+  
+  # List of all teams to filter by for analysis
+  #
+  # filter(batting_team == "Arizona Diamondbacks" |batting_team == "Atlanta Braves" | batting_team == "Baltimore Orioles" | batting_team == "Boston Red Sox"|  batting_team == "Chicago White Sox" |batting_team == "Chicago Cubs" |batting_team == "Cincinnati Reds" | batting_team == "Cleveland Guardians" | batting_team == "Colorado Rockies"| batting_team == "Detroit Tigers" |batting_team == "Houston Astros"|batting_team == "Kansas City Royals" | batting_team == "Los Angeles Angels" |batting_team == "Los Angeles Dodgers" | batting_team == "Miami Marlins"|batting_team == "Milwaukee Brewers"|batting_team == "Minnesota Twins"|batting_team == "New York Yankees" |batting_team == "New York Mets"|batting_team == "Oakland Athletics"| batting_team == "Philadelphia Phillies" |batting_team == "Pittsburgh Pirates" |batting_team == "San Diego Padres"|batting_team == "San Francisco Giants" | batting_team == "Seattle Mariners" |batting_team == "St. Louis Cardinals" |batting_team == "Tampa Bay Rays"|batting_team == "Texas Rangers"|batting_team == "Toronto Blue Jays"|batting_team == "Washington Nationals")
+
+
+
+### simulation of pitching results based on projection and standard deviation; sim_length is number of simulations to run
+
+sim_length = 10000
+rm(pitcher_simulation)
+sim_cap <- todays_pitchers$ceiling_projection[1]
+pitcher_simulation <- rnorm(sim_length, mean = todays_pitchers$pred[1], sd = todays_pitchers$sd_fps[1])
+pitcher_simulation[pitcher_simulation > sim_cap] = sim_cap
+
+for(i in 2:length(todays_pitchers$preds)){
+sim_cap <- todays_pitchers$ceiling_projection[i]
+practice_vector <- rnorm(sim_length, mean = todays_pitchers$pred[i], sd = todays_pitchers$sd_fps[i])
+practice_vector[practice_vector > sim_cap] = sim_cap
+pitcher_simulation <- cbind(pitcher_simulation, practice_vector)
+}
+### Ideally would like to cap max projection based on "ceiling performance" in todays_pitchers
+### Seems like a for loop where I go through each column by name and match that to todays_pitchers$ceiling_projection would work
+### Using the replace function perhaps?
+
+p_name_vector <- todays_pitchers$pitcher_name
+
+colnames(pitcher_simulation) <- p_name_vector
+
+# find ranks
+p_sim_rank <- t(apply(-pitcher_simulation, 1, rank))
+p_sim_rank <- t(p_sim_rank)
+# add to your dates
+#pitcher_simulation.rank <- cbind(pitcher_simulation[1], t(apply(-pitcher_simulation, 1, rank)))
+
+rm(ones_vector)
+rm(twos_vector)
+rm(threes_vector)
+
+
+ones_vector <- vector("numeric", length(p_name_vector))
+twos_vector <- vector("numeric", length(p_name_vector))
+threes_vector <- vector("numeric", length(p_name_vector))
+
+for(i in 1:length(p_sim_rank)){
+  
+if(i %% length(p_name_vector) == 0){
+  if(p_sim_rank[i] == 1){
+    ones_vector[length(p_name_vector)] <- ones_vector[ length(p_name_vector)] + 1
+  }
+  if(p_sim_rank[i] == 2){
+    twos_vector[length(p_name_vector)] <- twos_vector[length(p_name_vector)] + 1
+  }
+  if(p_sim_rank[i] == 3){
+    threes_vector[length(p_name_vector)] <- threes_vector[ length(p_name_vector)] + 1
+  }
+  
+} 
+else{
+  if(p_sim_rank[i] == 1){
+    ones_vector[i %% length(p_name_vector)] <- ones_vector[i %% length(p_name_vector)] + 1
+  }
+  if(p_sim_rank[i] == 2){
+    twos_vector[i %% length(p_name_vector)] <- twos_vector[i %% length(p_name_vector)] + 1
+  }
+  if(p_sim_rank[i] == 3){
+    threes_vector[i %% length(p_name_vector)] <- threes_vector[i %% length(p_name_vector)] + 1
+  }
+}  
+  
+}
+p_sim_rank <- t(p_sim_rank)
+
+
+psr_summary <-  t(data.frame(ones_vector,twos_vector,threes_vector))
+
+colnames(psr_summary) <- p_name_vector
+
+psr_summary <- t(psr_summary)
+
+psr_summary <- as.data.frame(psr_summary) 
+
+psr_summary <- psr_summary%>%
+  mutate(optimal = ones_vector/sim_length*100, top_three = (ones_vector+twos_vector+threes_vector)/(sim_length)*100)
+
+bbg_mbdb <- at_bat_result %>%
+  select(batter_name, batting_team, mbdb, mbdbL, mbdbR, HR.x) %>%
+  rename(homers = HR.x) %>%
+  distinct()
+
+batter_expectations <- todays_starters %>%
+  select(batting_team, pitchhand) %>%
+  distinct()
+
+batter_expectations <- batter_expectations %>%
+  merge(bbg_mbdb, by = "batting_team") %>%
+  filter(!is.na(pitchhand))%>%
+  mutate(game_mbdb = case_when(
+    pitchhand == "L" ~ mbdbL,
+    pitchhand == "R" ~ mbdbR
+  )) %>%
+select(batter_name, batting_team, game_mbdb, homers) %>%
+  distinct()
+
+
+
+```
+
+
+
+### Get Batting Orders (Only works once batting orders are available - updates batter_expectations to include only confirmed batters) 
+```{r get batting orders}
+
+
+#today = "2022-05-27"
+#From now on, today is defined in "get starting pitchers" section above
+
+
+todays_game_pks <- as.data.frame(mlb_schedule(season = 2022, level_ids = "1")) %>%
+  filter(date == today) %>%
+  select(game_pk, teams_away_team_name, teams_home_team_name)
+
+todays_batters <- as.data.frame(mlb_batting_orders(todays_game_pks$game_pk[1]))
+todays_batters$game_pk <- todays_game_pks$game_pk[1]
+
+for(i in 2:nrow(todays_game_pks)){
+  
+  temp_row <- mlb_batting_orders(todays_game_pks$game_pk[i])
+  
+  temp_row$game_pk <- todays_game_pks$game_pk[i]
+  
+  todays_batters <- dplyr::bind_rows(todays_batters, temp_row) %>%
+    filter(!is.na(game_pk))
+  
+}
+
+todays_batters <- unique(todays_batters) %>%
+  rename(batter_name = fullName)
+# 
+# todays_batters <-  merge(x = todays_batters, y = recent_stats, by = "batter_name") %>%
+#   filter(!is.na(batter_name))
+
+batter_expectations <- batter_expectations %>%
+  filter(batter_name %in% todays_batters$batter_name)
+
+# 
+# lm_batter_full_game <- lm(game_fp ~ av_pts_ab * op_av_pts_allow * park_adjust * park_ag_pitch, data = batters_by_game)
+# summary(lm_batter_full_game)
+# # Adjusted R-squared:  0.3125 ** More accurate with shorter timeline (current result from 11 days) **
+# 
+# preds <- predict(lm_batter_full_game, batters_by_game)
+
+
+
+```
+
+
+### *** Not currently working as intended *** Matchups by game (intent is to combine pitchers/batters by game for full analysis; not currently incorporated in anything)
+```{r matchups by game}
+
+# Match at_bat_result with full season stats from batters_by_game and pitchers_by_game
+at_bat_result$unique_batter_game_ID <- paste(at_bat_result$batter_name, at_bat_result$game_pk)
+at_bat_result$unique_pitcher_game_ID <- paste(at_bat_result$pitcher_name, at_bat_result$game_pk)
+
+batters_by_game$unique_batter_game_ID <- paste(batters_by_game$batter_name, batters_by_game$game_pk)
+pitchers_by_game$unique_pitcher_game_ID <- paste(pitchers_by_game$pitcher_name, pitchers_by_game$game_pk)
+
+batter_matchups_by_game <- batters_by_game %>%
+  merge(at_bat_result, by = "unique_batter_game_ID") 
+
+
+pitcher_matchups_by_game <- pitchers_by_game%>%
+  merge(at_bat_result, by = "unique_pitcher_game_ID")
+
+
+# Commenting out so I can add a bunch of factors
+# # Limit number of fields considered to simplify the data
+# matchups_by_game <- matchups_by_game %>%
+#   select(teams_home_team_name, game_pk, batting_team, batter_name.x,  game_fp.x, bathand.x, exp_batter_earned_fps_by_hand, exp_pitcher_allowed_fps_by_hand, park_adj_batter_ag_hand_exp, fielding_team, pitcher_name.x, game_fp.y, pitchhand.y, exp_batter_allowed_fps_by_hand, exp_pitcher_earned_fps_by_hand, park_adj_pitcher_ag_hand_exp, mean_batters_faced)
+
+matchups_by_game <- matchups_by_game %>%
+  rename(batter_name = batter_name.x, batterfps = game_fp.x, bathand = bathand.x, pitcher_name = pitcher_name.x, pitcherfps = game_fp.y, pitchhand = pitchhand.y)
+
+batter_matchups_by_game <- matchups_by_game %>%
+  group_by(batter_name, batterfps, batting_team) %>%
+  summarise(exp_batter_earned_fps_by_hand = mean(exp_batter_earned_fps_by_hand), exp_pitcher_allowed_fps_by_hand = mean(exp_pitcher_allowed_fps_by_hand), park_adj_batter_ag_hand_exp = mean(park_adj_batter_ag_hand_exp), mean_batters_faced = median(mean_batters_faced))
+
+
+# Prediction models using appropriate metrics
+
+lm_batter_dkfps_by_matchup <- lm(batterfps ~ (exp_batter_earned_fps_by_hand + exp_pitcher_allowed_fps_by_hand + park_adj_batter_ag_hand_exp)*mean_batters_faced, data = batter_matchups_by_game)
+summary(lm_batter_dkfps_by_matchup)
+# Adjusted R-squared:  0.1667
+
+preds <- predict(lm_batter_dkfps_by_matchup, matchups_by_game)
+matchups_by_game$batter_pred <- preds
+
+lm_pitcher_dkfps_by_matchup <- lm(pitcherfps ~ (exp_batter_allowed_fps_by_hand + exp_pitcher_earned_fps_by_hand + park_adj_pitcher_ag_hand_exp )* mean_batters_faced, data = matchups_by_game)
+summary(lm_pitcher_dkfps_by_matchup)
+# Adjusted R-squared:  0.3408
+
+preds <- predict(lm_pitcher_dkfps_by_matchup, matchups_by_game)
+matchups_by_game$pitcher_pred <- preds
+
+pitchers_in_matchups <- matchups_by_game %>%
+  group_by(pitcher_name, game_pk) %>%
+  summarise(pitcher_pred = mean(pitcher_pred), pitcherfps = mean(pitcherfps)) %>%
+  distinct()
+
+
+lm_pitchers_in_matchups <- lm(pitcherfps ~ pitcher_pred, data = pitchers_in_matchups)
+summary(lm_pitchers_in_matchups)
+# Adjusted R-squared:  0.3837 
+
+pitchers_in_matchups %>%
+  ggplot(aes(x = pitcher_pred, y = pitcherfps)) +
+  geom_point()
+
+
+team_matchups_bats <- matchups_by_game %>%
+  select(batting_team, batter_name, game_pk, batterfps, batter_pred, pitcher_pred) %>%
+  group_by(batting_team, game_pk, batter_name)%>%
+  summarise(batterfps = mean(batterfps), batter_pred = mean(batter_pred), pitcher_pred = median(pitcher_pred)) %>%
+  group_by(batting_team, game_pk) %>%
+  summarise(sum_batter_dkfps = sum(batterfps), sum_pred_batter_fps = sum(batter_pred), pitcher_pred = median(pitcher_pred))
+
+lm_team_bats_by_matchup <- lm(sum_batter_dkfps ~ sum_pred_batter_fps+pitcher_pred, data = team_matchups_bats)
+summary(lm_team_bats_by_matchup)
+# Adjusted R-squared:  0.2369
+
+team_matchups_bats %>%
+  ggplot(aes(x=sum_pred_batter_fps, y=sum_batter_dkfps)) +
+  geom_point()
+
+
+# Tried to adjust based on team's average discrepancy and made things worse
+# 
+# team_matchups_bats$exceeds_expectation <- team_matchups_bats$sum_batter_dkfps - team_matchups_bats$sum_pred_batter_fps
+# 
+# team_avg_discrepancy <- team_matchups_bats%>%
+#   group_by(batting_team) %>%
+#   summarise(avg_discrepancy = mean(exceeds_expectation))
+# 
+# team_matchups_bats <- team_matchups_bats %>%
+#   merge(team_avg_discrepancy, by = "batting_team")
+# 
+# team_matchups_bats$new_team_proj <- team_matchups_bats$avg_discrepancy + team_matchups_bats$sum_pred_batter_fps
+# 
+# lm_team_bats_by_matchup <- lm(sum_batter_dkfps ~ new_team_proj, data = team_matchups_bats)
+# summary(lm_team_bats_by_matchup)
+# # Adjusted R-squared:  0.2094
+
+
+```
+
+
+
+### Get matchups (best if all batting orders/starting pitchers are finalized)
+```{r get matchups}
+
+
+
+#today = "2022-05-26"
+#From now on, today is defined in "get batting orders" section above
+
+  
+todays_starters <- todays_starters %>%
+  rename(opponent = team)
+
+todays_game_pks <- as.data.frame(mlb_schedule(season = 2022, level_ids = "1")) %>%
+  filter(date == today) %>%
+  select(game_pk, teams_away_team_name, teams_home_team_name)
+
+todays_batters <- todays_batters %>%
+  rename(team = team.x)
+
+matchups <- todays_batters %>%
+  merge(todays_game_pks, by = "game_pk") %>%
+  mutate(opponent = case_when(
+    team == "away" ~ teams_home_team_name,
+    team == "home" ~ teams_away_team_name
+  ))
+
+matchups <- matchups %>%
+  merge(todays_starters, by = "opponent") 
+
+matchups <- matchups%>%
+  merge(full_game_pitcher_score, by = "pitcher_name")
+
+matchups <- matchups%>%
+  select(-game_pk.y, -game_pk.x) %>%
+  distinct()%>%
+  rename(pitchhand = pitchhand.x)
+
+matchups$batter_onevone_matchup_proj <- (case_when(
+  matchups$pitchhand == "R" ~ matchups$mbdbR,
+  matchups$pitchhand == "L" ~ matchups$mbdbL
+) +
+case_when(
+  matchups$bathand == "R" ~ matchups$bats_R_factors,
+  matchups$bathand == "L" ~ matchups$bats_L_factors,
+  matchups$bathand == "S" ~ max(matchups$bats_R_factors, matchups$bats_L_factors)
+  
+)
+)/2
+
+matchups$batter_effect <- case_when(
+  matchups$pitchhand == "R" ~ matchups$mpdbR,
+  matchups$pitchhand == "L" ~ matchups$mpdbL
+)
+
+matchups$pitcher_effect <- case_when(
+  matchups$bathand == "R" ~ matchups$pitch_R_factors,
+  matchups$bathand == "L" ~ matchups$pitch_L_factors,
+  matchups$bathand == "S" ~ min(matchups$pitch_R_factors, matchups$pitch_L_factors)
+)
+
+
+
+matchups$pitcher_onevone_matchup_proj <- (matchups$batter_effect + matchups$pitcher_effect)/2
+
+matchups <- matchups %>%
+  rename(park_adjust = park_adjust.y)
+
+pitcher_matchups <- matchups %>%
+  group_by(pitcher_name)%>%
+  summarise(ob_av_pts_allow = mean(pitcher_onevone_matchup_proj), mpdp = mean(pitcher_effect), mpdb = mean(batter_effect))
+# 
+# matchups <- matchups %>%
+#   select(-mpdp, -mpdb)
+# 
+# pitcher_matchups <- pitcher_matchups %>%
+#   merge(matchups, by = "pitcher_name")
+# 
+# pitcher_matchups <- pitcher_matchups %>%
+#   select(pitcher_name, ob_av_pts_allow, mpdp, mpdb.x) %>%
+#   rename(mpdb = mpdb.x) %>%
+#   distinct()
+# 
+# pitcher_matchups$preds <- predict(lm_pitcher_full_game, pitcher_matchups)
+# 
+# 
+# batter_matchups <- matchups %>%
+#   rename(av_pts_ab = batter_onevone_matchup_proj, op_av_pts_allow = mbdp) %>%
+#   select(batter_name, av_pts_ab, op_av_pts_allow)
+# 
+# batter_matchups$preds <- predict(lm_batter_full_game, batter_matchups)
+# # 
+matchups <- matchups %>%
+  select(pitcher_name, opponent, pitcher_onevone_matchup_proj, batter_name, teamName, abbreviation, batting_order, batter_onevone_matchup_proj)
+# 
+# todays_starters <- todays_starters %>%
+#   select(pitcher_name, opponent, batting_team, teams_home_team_name, preds, sum_bat_factors, sum_pitch_factors, mean_projection, ceiling_projection, park_adjust ,H , HR , ERA , ob_av_pts_ag , mpdb , mpdp ,  mean_batters_faced , IP , b_allowed_fps , p_earned_fps)
+# 
+# team_sum_preds <- matchups %>%
+#   distinct() %>%
+#   group_by(teamName, game_pk, pitcher_name) %>%
+#   summarise(sum_batter_proj_per_ab = sum(batter_onevone_matchup_proj), mean_pitcher_proj = mean(pitcher_onevone_matchup_proj) * mean_batters_faced.y) %>%
+#   distinct()
+
+```
+
+
+### !!!Stacks!!! (optional at end)
+```{r}
+
+
+## Relies on previous chunk to provide batter_stats; check this df for appropriate filters
+
+
+recent_stats <- batters_by_game %>%
+  group_by(batter_name) %>%
+  summarise(game_pk = last(game_pk)) %>%
+  mutate(ugID = paste(batter_name, game_pk)) %>%
+  merge(batters_by_game, by = "ugID") %>%
+  rename(batter_name = batter_name.x) %>%
+  merge(batter_stats, by = "batter_name")
+
+
+cubs_batters_stats <- recent_stats %>%
+  filter(Level == "Maj-NL" & Team == "Chicago")
+
+white_sox_batters_stats <- recent_stats %>%
+  filter(Level == "Maj-AL" & Team == "Chicago")
+
+red_sox_batters_stats <- recent_stats %>%
+  filter(Team == "Boston")
+
+reds_batters_stats <- recent_stats %>%
+  filter(Team == "Cincinnati")
+
+dodgers_batters_stats <- recent_stats %>%
+  filter(Level == "Maj-NL" & Team == "Los Angeles")
+
+angels_batters_stats <- recent_stats %>%
+  filter(Level == "Maj-AL" & Team == "Los Angeles")
+
+twins_batters_stats <- recent_stats %>%
+  filter(Team == "Minnesota")
+
+pirates_batters_stats <- recent_stats %>%
+  filter(Team == "Pittsburgh")
+
+rockies_batters_stats <- recent_stats %>%
+  filter(Team == "Colorado")
+
+yankees_batters_stats <- recent_stats %>%
+  filter(Level == "Maj-AL" & Team == "New York")
+
+mets_batters_stats <- recent_stats %>%
+  filter(Level == "Maj-NL" & Team == "New York")
+
+astros_batters_stats <- recent_stats %>%
+  filter(Team == "Houston")
+
+mariners_batters_stats <- recent_stats %>%
+  filter(Team == "Seattle")
+
+tigers_batters_stats <- recent_stats %>%
+  filter(Team == "Detroit")
+
+athletics_batters_stats <- recent_stats %>%
+  filter(Team == "Oakland")
+
+nationals_batters_stats <- recent_stats %>%
+  filter(Team == "Washington")
+
+padres_batters_stats <- recent_stats %>%
+  filter(Team == "San Diego")
+
+brewers_batters_stats <- recent_stats %>%
+  filter(Team == "Milwaukee")
+
+giants_batters_stats <- recent_stats %>%
+  filter(Team == "San Francisco")
+
+braves_batters_stats <- recent_stats %>%
+  filter(Team == "Atlanta")
+
+phillies_batters_stats <- recent_stats %>%
+  filter(Team == "Philadelphia")
+
+rangers_batters_stats <- recent_stats %>%
+  filter(Team == "Texas")
+
+diamondbacks_batters_stats <- recent_stats %>%
+  filter(Team == "Arizona")
+
+rays_batters_stats <- recent_stats %>%
+  filter(Team == "Tampa Bay")
+
+guardians_batters_stats <- recent_stats %>%
+  filter(Team == "Cleveland")
+
+marlins_batters_stats <- recent_stats %>%
+  filter(Team == "Miami")
+
+orioles_batters_stats <- recent_stats %>%
+  filter(Team == "Baltimore")
+
+cardinals_batters_stats <- recent_stats %>%
+  filter(Team == "St. Louis")
+
+blue_jays_batters_stats <- recent_stats %>%
+  filter(Team == "Toronto")
+
+royals_batters_stats <- recent_stats %>%
+  filter(Team == "Kansas City")
+
+### Here! Bind rows related to teams you want to stack
+
+stacks_i_care_about <- dplyr::bind_rows(mariners_batters_stats, angels_batters_stats) %>%
+ filter(G > 5 & HR > 1) %>%
+ merge(full_game_batter_score, by = "batter_name")
+
+stacks_i_care_about <- stacks_i_care_about[order(-stacks_i_care_about$mbdb.x),] %>%
+  select(batter_name, Team, mbdb.x, mbdbL.x, mbdbR.x, homers, fp_ema, rhythm_score, game_fp, inv_var)
+
+
+
+# 
+#  stacks_i_care_about <- stacks_i_care_about[order(-stacks_i_care_about$mbdb.x),] %>%
+#    select(batter_name, HR, num_abs, Team, bathand.x, mbdbL.x, mbdbR.x)
+
+# getting preds to work would be cool but right now this chunk is just predicting last games's info. will need to 
+# incorporate next game's location/pitcher data for this to be interesting, as well as resolve the NAs
+# 
+# preds <- predict(lm_batter_full_game, stacks_i_care_about)
+# 
+# stacks_i_care_about$pred <- preds
+# 
+# stacks_i_care_about <- stacks_i_care_about %>%
+#   select(batter_name, pred, game_fp)
+
+#  filter(G > 5 & HR > 1) %>%
+#  merge(full_game_batter_score, by = "batter_name")
+
+# 
+# stacks_i_care_about <- stacks_i_care_about[order(-stacks_i_care_about$mbdb),] %>%
+#   select(batter_name, HR, num_abs, Team, bathand, mbdbL, mbdbR)
+
+```
+
+### Mess with batter info
+``` {r no way Jose}
+
+
+jose_ramirez_abs <- at_bat_result %>%
+  filter(batter_name == "Gleyber Torres")
+
+jose_games <- jose_ramirez_abs %>%
+  group_by(game_pk) %>%
+  summarise(sum(batter_dkfps)) %>%
+  rename(game_fps = "sum(batter_dkfps)")
+
+jose_games <- jose_games %>%
+  merge(scheddy, by = "game_pk") 
+
+
+jose_games %>%
+  ggplot(aes(x=game_date, y=game_fps)) +
+  geom_point()
+
+```
+
+### more info
+```{r more info}
+
+new_batter_summaries <- batters_by_game %>%
+  group_by(batter_name) %>%
+  summarise(mean_fp = mean(game_fp), mean_ema = mean(fp_ema), mean_rhythm = mean(rhythm_score), num_games = n()) 
+
+new_batter_summaries <- new_batter_summaries %>%
+  mutate(
+    batter_quality = (mean_fp + mean_ema + mean_rhythm/4)*3
+  )
+
+new_batter_summaries <- batters_by_game %>%
+  merge(new_batter_summaries, by = "batter_name", all.x = TRUE)
+
+
+lm_new_batter_full_game <- lm(game_fp ~ (av_pts_ab + sqrt(exp_batter_earned_fps_by_hand) + fp_ema + big_games + rhythm_score + park_adjust + batter_quality) / mad_fps * (sqrt(exp_pitcher_allowed_fps_by_hand) + inv_pitcher_pred), data = new_batter_summaries)
+summary(lm_new_batter_full_game)
+# Adjusted R-squared:  Adjusted R-squared:  0.1073
+
+preds <- predict(lm_new_batter_full_game, new_batter_summaries)
+
+new_batter_summaries$pred <- preds
+
+new_batter_summaries %>%
+  ggplot(aes(x=pred, y=game_fp)) +
+  geom_point()
+
+
+
+new_teams_by_game <- new_batter_summaries %>%
+  merge(batter_team, by = "batter_name") %>%
+  rename(team = team.x) %>%
+  group_by(team, game_pk) %>%
+  summarise(team_fp = sum(game_fp), total_op_fp = sum(op_fp), team_w_av_abs = sum(av_pts_ab), op_w_av_abs = sum(op_av_pts_allow), team_av_per_ab = mean(mbdb), op_av_per_ab = mean(mpdb), park_adjust = mean(park_adjust), park_ag_pitch = sum(park_ag_pitch), sum_preds = sum(pred), mean_woba = median(wOBA), mean_ISO = median(ISO), rhythm_score = mean(rhythm_score), fp_ema = mean(fp_ema), team_abs = sum(at_bats), mean_quality = mean(batter_quality)) 
+
+
+new_teams_by_game$op_allowed_fps_per_ab <- new_teams_by_game$total_op_fp/new_teams_by_game$team_abs
+
+lm_team_full_game <- lm(team_fp ~ sum_preds + park_ag_pitch + rhythm_score + fp_ema + mean_quality, data = new_teams_by_game)
+summary(lm_team_full_game)
+#Adjusted R-squared:  0.3399
+
+preds <- predict(lm_team_full_game, new_teams_by_game)
+
+new_teams_by_game$pred <-preds
+
+new_teams_by_game %>%
+  ggplot(aes(x=pred, y=team_fp)) +
+  geom_point()
+
+```
+
+

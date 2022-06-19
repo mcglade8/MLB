@@ -1,0 +1,64 @@
+---
+title: "Begin"
+output: html_document
+---
+
+install.package("Lahman")
+library(Lahman)
+library(dplyr)
+library(ggplot2)
+### library(caret) there is no package called caret
+
+head(Teams)
+
+### Exploratory data analysis
+
+
+teams <- Teams %>%
+  mutate(runs_game = R/(W+L))
+  
+teams_year <- teams %>%
+  group_by(yearID) %>%
+  summarize(mean_runs = mean(runs_game, na.rm=TRUE))
+
+ 
+teams_year %>%
+  ggplot(aes(x=yearID, y=mean_runs)) +
+  geom_line() + 
+  geom_point() + 
+  ggtitle('Average MLB Runs by Year')
+
+
+head(teams_year)
+
+
+## Predict wins by team ##
+
+
+df_clean <- teams %>%
+  select(name, yearID, W, L, R, H, X2B, X3B, HR, SO, RA) %>%
+  filter(yearID >= 2010)
+  
+
+head(df_clean)
+tail(df_clean)
+
+lm1 <- lm(W ~ R + H + X2B + X3B + HR + SO + RA, data = df_clean)
+summary(lm1)
+
+## lm2 takes only statistically significant variables from lm1
+lm2 <- lm(W ~ R + H + X3B + SO + RA, data = df_clean)
+summary(lm2)
+
+
+preds <- predict(lm2, df_clean)
+
+df_clean$pred <-preds
+
+## RMSE(df_clean$pred, df_clean$W) part of caret library, can't use; supposed to be root mean squared error
+
+df_clean %>%
+  ggplot(aes(pred, W)) + 
+  geom_point() +
+  geom_smooth() +
+  ggtitle('Predicted Wins versus Actual')
