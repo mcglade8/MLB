@@ -1,0 +1,31 @@
+library(coach)
+library(dplyr)
+
+data <- read_dk("C:/Users/jorda/Downloads/DKSalaries.csv") %>%
+  select(-fpts_proj) 
+
+temp_pitchers <- todays_pitchers %>%
+  select(pitcher_name.x, preds) %>%
+  rename(player = pitcher_name.x, fpts_proj = preds)
+
+temp_batters <- todays_batters %>%
+  ungroup() %>%
+  select(batter_name.x, preds) %>%
+  rename(player = batter_name.x, fpts_proj = preds)
+
+all_preds <- rbind(temp_pitchers, temp_batters)
+
+data <- data %>%
+  merge(all_preds, by = "player") %>%
+  distinct()
+  
+data$position<- replace(data$position, data$position %in% c("SP", "RP"), "P")
+
+model <- model_dk_mlb(data)
+
+set.seed(10) 
+n <- nrow(data) 
+randomness <- function(x) rnorm(n, x, 3)
+num_lineups <- 3
+
+optimize_generic(data, model, L = num_lineups, randomness = randomness, stack_sizes = c(5,2))
