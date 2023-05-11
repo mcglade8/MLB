@@ -1,0 +1,1220 @@
+---
+title: "MLBDFS.rmd"
+output: html_document
+date: "2022-12-19"
+---
+
+
+### Setup
+```{r setup, include= FALSE}
+library(lpSolve)
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(coach)
+library(googlesheets4)
+library(R.utils)
+library(tm)
+options(dplyr.summarise.inform = FALSE)
+
+```
+
+
+### DK optimizer
+```{r dk-optimizer}
+
+testing <- F
+use_downloaded_top_stacks <-T
+add_HR_rng <- T
+simplify <- F
+num_lineups <-375
+allow_one_batter_against_pitcher <- F ## currently not doing anything
+bans <- NULL#c("LAA", "WAS", "CHC", "HOU", "OAK", "BOS", "KC", "CWS")
+allow_p_from_bans <- NULL#c("Shohei Ohtani", "Framber Valdez")
+min_salary <- 47000
+own_cap <- .000 ## currently not doing anything
+bs_size <- 5 # Min size of "big stack" (either 4 or 5)
+boost_teams <- #c("TB")
+fade_teams <- NULL#c("ARI")
+small_boost <- NULL#c("LAA", "ATL", "SEA", "NYY", "BAL", "TOR")
+small_fade <- NULL#c( "MIN", "WAS", "TEX", "OAK", "SD", "NYM", "BOS", "ARI", "COL")
+boost_effect <- .25
+fade_effect <- .25
+sb_effect <- .1
+sf_effect <- .1
+top_pct_cutoff <-0.01
+
+timeout_threshhold <- .55
+rm(final_export)
+
+if(!testing){
+oprojections <- read_sheet("https://docs.google.com/spreadsheets/d/105GoLzknZCxKhvd6BDQKZQnTD4SXYg5xU2bDRWFjsks/edit#gid=1676563604")
+
+keep_ps <- oprojections %>%
+  filter(Team %in% bans, Name %in% allow_p_from_bans)
+
+oprojections <- oprojections%>%
+  filter(!Name %in% bans, !Team %in% bans, !is.na(Name), DKfpts >0, !(Name == "Max Muncy" & !Team == "LAD"), !(Name == "Carlos Perez" &!Team == "OAK"))
+
+if(length(allow_p_from_bans)>0) oprojections <- rbind(oprojections, keep_ps)
+
+}
+
+pb <- txtProgressBar(0, num_lineups, style = 3)
+
+oprojections <- filter(oprojections, TopPct >= top_pct_cutoff)
+
+
+if(use_downloaded_top_stacks){
+top_stacks <- read.csv("C:/Users/jorda/Downloads/MLB Projections - TopStacks.csv")
+
+for(i in 2:ncol(top_stacks)){
+top_stacks[,i] <- as.numeric(sub("%", "", top_stacks[,i]))
+
+}
+
+manipulation <- select(oprojections, Team, Position, Opp)
+### make this index the top stacks tool for manipulation
+# manipulation <- mutate(manipulation, multiplier = case_when(
+#   Position == "P" ~ top_stacks$Kelly.[which(top_stacks$Team == Opp)],
+#   T ~ top_stacks$Kelly.[which(top_stacks$Team == Team)]
+# )) 
+
+man_factor <- top_stacks$RelativeGoalOwn
+#man_factor <- (man_factor-mean(man_factor, na.rm = TRUE))/sd(man_factor, na.rm = TRUE)
+
+vman <- c()
+for(i in 1:nrow(manipulation)){
+  vman[i] <- case_when(
+  manipulation$Position[i] == "P" ~ 0,
+  T ~ man_factor[which(top_stacks$Team == manipulation$Team[i])]
+)
+}
+
+manipulation <- vman/100+1#/max(max(man_factor, na.rm = T), abs(min(man_factor, na.rm = T)))+1
+
+}else{
+
+manipulation <- as.numeric(oprojections$Team %in% boost_teams & !oprojections$Position == "P")*boost_effect - as.numeric(oprojections$Team %in% fade_teams & !oprojections$Position == "P")*fade_effect - as.numeric(oprojections$Opp %in% boost_teams & oprojections$Position == "P")*boost_effect/2 + as.numeric(oprojections$Opp %in% fade_teams & oprojections$Position == "P")*fade_effect/2 + as.numeric(oprojections$Team %in% small_boost & !oprojections$Position == "P")*sb_effect - as.numeric(oprojections$Team %in% small_fade & !oprojections$Position == "P")*sf_effect - as.numeric(oprojections$Opp %in% small_boost & oprojections$Position == "P")*sb_effect/2 + as.numeric(oprojections$Opp %in% small_fade & oprojections$Position == "P")*sf_effect/2 + 1
+}
+
+oprojections$sixtieth_percentile <- qnorm(.5, mean = oprojections$DKfpts, sd = oprojections$SD) ### Cash line requirement
+oprojections$ninetieth_percentile <- qnorm(.85, mean = oprojections$DKfpts, sd = oprojections$SD) ### GPP-winning requirement
+oprojections$abs_ceiling <- qnorm(.95, mean = oprojections$DKfpts, sd = oprojections$SD) ### GPP-winning requirement
+
+cash_line <- sum(slice_max(filter(oprojections, Position == "P"), sixtieth_percentile, n=2)$sixtieth_percentile) + max(filter(oprojections, grepl("1B", Position, fixed = TRUE))$sixtieth_percentile)+ max(filter(oprojections, grepl("2B", Position, fixed = TRUE))$sixtieth_percentile)+ max(filter(oprojections, grepl("3B", Position, fixed = TRUE))$sixtieth_percentile)+ max(filter(oprojections, grepl("C", Position, fixed = TRUE))$sixtieth_percentile)+ max(filter(oprojections, grepl("SS", Position, fixed = TRUE))$sixtieth_percentile)+ sum(slice_max(filter(oprojections, grepl("OF", Position, fixed = TRUE)), sixtieth_percentile, n=3)$sixtieth_percentile)
+
+winning_line <- sum(slice_max(filter(oprojections, Position == "P"), ninetieth_percentile, n=2)$ninetieth_percentile) + max(filter(oprojections, grepl("1B", Position, fixed = TRUE))$ninetieth_percentile)+ max(filter(oprojections, grepl("2B", Position, fixed = TRUE))$ninetieth_percentile)+ max(filter(oprojections, grepl("3B", Position, fixed = TRUE))$ninetieth_percentile)+ max(filter(oprojections, grepl("C", Position, fixed = TRUE))$ninetieth_percentile)+ max(filter(oprojections, grepl("SS", Position, fixed = TRUE))$ninetieth_percentile)+ sum(slice_max(filter(oprojections, grepl("OF", Position, fixed = TRUE)), ninetieth_percentile, n=3)$ninetieth_percentile)
+
+
+##################################################################
+####################### BEGIN LOOP ###############################
+##################################################################
+
+
+n <- 0
+while(n < num_lineups){
+  
+    tryCatch(expr = {withTimeout({
+  
+projections <- oprojections
+
+if(add_HR_rng){
+  projections$build_proj <- rnorm(nrow(projections), mean = projections$DKfpts-projections$HRs*14, sd = projections$SD-projections$HRs*10)
+  hit_a_homer <- runif(nrow(projections)) < projections$HRs
+  projections$build_proj <- projections$build_proj * manipulation + as.numeric(hit_a_homer)
+  
+}else{
+  projections$build_proj <- rnorm(nrow(projections), mean = projections$DKfpts, sd = projections$SD)
+  projections$build_proj <- projections$build_proj * manipulation
+}
+
+batters <- filter(projections, !is.na(Order))
+pitchers <- filter(projections, Position == "P")
+
+teams <- projections %>%
+  select(Team, Opp) %>%
+  unique()
+
+stacks <- c(gsub(" ", "", paste0(teams, "5")), gsub(" ", "", paste0(teams, "4")), gsub(" ", "", paste0(teams, "3")),gsub(" ", "", paste0(teams, "2")))
+
+stack5 <- batters%>%
+  group_by(Team)%>%
+  slice_max(order_by = build_proj, n = 5) 
+
+summarise_stack5 <- stack5 %>%
+  summarise(build_proj = sum(build_proj),
+            Salary = sum(Salary),
+            n1 = sum(grepl("1B", Position, fixed = TRUE)),
+            n2 = sum(grepl("2B", Position, fixed = TRUE)),
+            n3 = sum(grepl("3B", Position, fixed = TRUE)),
+            nSS = sum(grepl("SS", Position, fixed = TRUE)),
+            nC = sum(grepl("C", Position, fixed = TRUE)),
+            nOF = sum(grepl("OF", Position, fixed = TRUE))
+  ) %>%
+  mutate(stack_size = 5)
+
+
+stack4 <- batters%>%
+  group_by(Team)%>%
+  slice_max(order_by = build_proj, n = 4) 
+
+summarise_stack4 <- stack4 %>%
+  summarise(build_proj = sum(build_proj),
+            Salary = sum(Salary),
+            n1 = sum(grepl("1B", Position, fixed = TRUE)),
+            n2 = sum(grepl("2B", Position, fixed = TRUE)),
+            n3 = sum(grepl("3B", Position, fixed = TRUE)),
+            nSS = sum(grepl("SS", Position, fixed = TRUE)),
+            nC = sum(grepl("C", Position, fixed = TRUE)),
+            nOF = sum(grepl("OF", Position, fixed = TRUE))
+  )%>%
+  mutate(stack_size = 4)
+
+stack3 <- batters%>%
+  group_by(Team)%>%
+  slice_max(order_by = build_proj, n = 3) 
+
+summarise_stack3 <- stack3 %>%
+  summarise(build_proj = sum(build_proj),
+            Salary = sum(Salary),
+            n1 = sum(grepl("1B", Position, fixed = TRUE)),
+            n2 = sum(grepl("2B", Position, fixed = TRUE)),
+            n3 = sum(grepl("3B", Position, fixed = TRUE)),
+            nSS = sum(grepl("SS", Position, fixed = TRUE)),
+            nC = sum(grepl("C", Position, fixed = TRUE)),
+            nOF = sum(grepl("OF", Position, fixed = TRUE))
+  )%>%
+  mutate(stack_size = 3)
+
+stack2 <- batters%>%
+  group_by(Team)%>%
+  slice_max(order_by = build_proj, n = 2) 
+
+summarise_stack2 <- stack2 %>%
+  summarise(build_proj = sum(build_proj),
+            Salary = sum(Salary),
+            n1 = sum(grepl("1B", Position, fixed = TRUE)),
+            n2 = sum(grepl("2B", Position, fixed = TRUE)),
+            n3 = sum(grepl("3B", Position, fixed = TRUE)),
+            nSS = sum(grepl("SS", Position, fixed = TRUE)),
+            nC = sum(grepl("C", Position, fixed = TRUE)),
+            nOF = sum(grepl("OF", Position, fixed = TRUE))
+  )%>%
+  mutate(stack_size = 2)
+
+
+
+
+stack_list <- rbind(summarise_stack5,summarise_stack4,summarise_stack3, summarise_stack2) %>%
+  merge(teams) %>%
+  mutate(Name = paste0(Team,stack_size), nP = 0)
+
+stack_list <- select(stack_list, Name, Salary, build_proj, Team, Opp, n1, n2, n3, nSS, nC, nOF, nP, stack_size)
+
+batters <- mutate(batters, stack_size = 1, n1 = grepl("1B", Position, fixed = TRUE),
+            n2 = grepl("2B", Position, fixed = TRUE),
+            n3 = grepl("3B", Position, fixed = TRUE),
+            nSS = grepl("SS", Position, fixed = TRUE),
+            nC = grepl("C", Position, fixed = TRUE),
+            nOF = grepl("OF", Position, fixed = TRUE), 
+            nP = 0, 
+            stack_size = 1) %>%
+  select(Name, Salary, build_proj, Team, Opp, n1, n2, n3, nSS, nC, nOF, nP, stack_size)
+
+pitchers <- mutate(pitchers, stack_size = 1,n1 = 0,
+            n2 = 0,
+            n3 = 0,
+            nSS = 0,
+            nC = 0,
+            nOF = 0,
+            nP = 1,
+            stack_size = 1) %>%
+  select(Name, Salary, build_proj, Team, Opp, n1, n2, n3, nSS, nC, nOF, nP, stack_size)
+
+all_considerations <- rbind(stack_list, pitchers, batters)
+
+vstack <- as.numeric(all_considerations$stack_size > 1)
+vplayers <- all_considerations$stack_size
+vunstacked <- as.numeric(all_considerations$stack_size == 1 & all_considerations$nP == 0)
+vbig_stack <- as.numeric(all_considerations$stack_size >= bs_size)
+vthree_stack <- as.numeric(all_considerations$stack_size == 3)
+v1b <- all_considerations$n1
+v2b <- all_considerations$n2
+v3b <- all_considerations$n3
+vss <- all_considerations$nSS
+vc <- all_considerations$nC
+vOF <- all_considerations$nOF
+vP <- all_considerations$nP
+vsalary <- all_considerations$Salary
+
+vteams <- c()
+
+for(t in 1:nrow(teams)){
+  vteam <- as.numeric(all_considerations$Team==teams$Team[t] & all_considerations$nP == 0)
+  vopp_pitcher <- as.numeric(all_considerations$Opp == teams$Team[t] & all_considerations$nP== 1)
+  
+  vteams <- c(vteams, vteam+vopp_pitcher)
+}
+
+req_three_stack <- as.numeric(bs_size < 5)
+
+matrix_vector <- c(vsalary, vsalary, vstack, vunstacked, vbig_stack, vplayers, v1b, v2b, v3b, vss, vc, vOF, vP, vthree_stack, vteams) #vteams must be listed last
+
+
+matrix_vector[is.na(matrix_vector)] <- 0
+matrix_vector[is.infinite(matrix_vector)] <- 0
+
+const.mat = matrix(matrix_vector, nrow = length(matrix_vector)/nrow(all_considerations), byrow = TRUE)
+# 
+# ## Define constraints and direction - 50000 salary
+const.rhs = c(50000, min_salary,    2,   1,    1,   10,   1,   1,    1,    1,   1,   3,     2, req_three_stack)
+const.dir = c("<=" , ">=","==","<=", ">=", "==",">=",">=", ">=", ">=",">=",">=",  "==",  "==")
+
+for(t in 1:nrow(teams)){
+  const.dir <- c(const.dir, "<=")
+  const.rhs <- c(const.rhs, 1)
+}
+
+
+# 
+# ### Optimize
+objective.in <- all_considerations$build_proj
+objective.in[is.nan(objective.in)] <- 0
+objective.in[is.na(objective.in)] <- 0
+objective.in[objective.in < 0] <- 0
+optimum = lp(direction = "max", objective.in, const.mat, const.dir, const.rhs, all.bin = TRUE)
+# 
+all_considerations$optimal <- optimum$solution
+
+lineup <- all_considerations %>%
+  filter(optimal == 1)
+
+one_offs <- lineup %>%
+  filter(stack_size == 1)
+
+stacks_used <- lineup %>%
+  filter(stack_size > 1)
+
+stack1 <- batters %>%
+  filter(Team == stacks_used$Team[1]) %>%
+  slice_max(order_by = build_proj, n = stacks_used$stack_size[1])
+
+stack2 <- batters %>%
+  filter(Team == stacks_used$Team[2]) %>%
+  slice_max(order_by = build_proj, n = stacks_used$stack_size[2])
+
+lineup <- rbind(select(one_offs, -optimal), stack1, stack2)
+
+ids <- projections %>%
+  filter(Name %in% lineup$Name) %>%
+  select(Name, ID, Position, sixtieth_percentile, abs_ceiling)
+
+lineup <- merge(lineup, ids)
+
+if(sum(lineup$abs_ceiling)>winning_line && sum(lineup$build_proj) >cash_line){
+
+
+p_used <- lineup %>% filter(Position == "P")
+fix_lineup <- filter(lineup, !Name %in% p_used$Name) %>%
+  mutate(order = case_when(
+    grepl("/", Position, fixed = TRUE) ~ 0,
+    grepl("C", Position, fixed = TRUE) ~ 1,
+    grepl("1", Position, fixed = TRUE) ~ 2,
+    grepl("2", Position, fixed = TRUE) ~ 3,
+    grepl("3", Position, fixed = TRUE) ~ 4,
+    grepl("SS", Position, fixed = TRUE) ~ 5,
+    grepl("OF", Position, fixed = TRUE) ~ 6
+    
+  ))
+
+
+ordered_lineup <- fix_lineup %>%
+  filter(!order == 0)
+
+fix_lineup <- filter(fix_lineup, order == 0)
+
+missing_pos_order <- c(1:6)[!c(1:6) %in% ordered_lineup$order]
+missing_pos <- c("C", "1B", "2B", "3B", "SS", "OF")[missing_pos_order]
+
+OFs <- nrow(filter(ordered_lineup, Position == "OF"))
+
+while(OFs < 3){
+  missing_pos_order[length(missing_pos_order)+1] <- 6
+  missing_pos[length(missing_pos)+1] <- "OF"
+  OFs <- OFs + 1
+}
+
+needs_ordered <- nrow(ordered_lineup) < 8
+
+if(length(missing_pos_order) == nrow(fix_lineup)){
+while(needs_ordered){
+  fix_lineup <- fix_lineup[sample(1:nrow(fix_lineup)),]
+  
+  needs_ordered <- F
+  
+  p <- 1
+  while(p <= nrow(fix_lineup) & !needs_ordered){
+    needs_ordered <- !grepl(missing_pos[p], fix_lineup$Position[p], fixed = TRUE)
+    p <- p+1
+  }
+  
+  #if(grepl("C", lineup$Position[1], fixed = TRUE) & grepl("1", lineup$Position[2], fixed = TRUE) & grepl("2", lineup$Position[3], fixed = TRUE) & grepl("3", lineup$Position[4], fixed = TRUE) & grepl("SS", lineup$Position[5], fixed = TRUE) & grepl("OF", lineup$Position[6], fixed = TRUE) & grepl("OF", lineup$Position[7], fixed = TRUE) & grepl("OF", lineup$Position[8], fixed = TRUE)) needs_ordered <- F
+  
+}
+
+  
+  if(nrow(ordered_lineup)<8){
+fix_lineup$order <- missing_pos_order
+fix_lineup <- rbind(fix_lineup, ordered_lineup)
+  }else{
+  fix_lineup <- ordered_lineup
+}
+  
+lineup <- fix_lineup[order(fix_lineup$order),]
+lineup <- select(lineup, -order)
+
+lineup <- rbind(p_used, lineup)
+
+export <- lineup$ID
+
+
+if(n==0){
+  final_export <-export
+  n <- 1
+
+}else{
+  final_export <- rbind(final_export, export)
+  final_export <- unique(final_export)
+  n <- nrow(final_export)
+}
+
+ setTxtProgressBar(pb, n)
+}
+}
+    }, timeout = timeout_threshhold)}, TimeoutException = function(ex) {#cat("\nTimeout. Lineups built so far: ", n-1, "/", num_lineups," \n")
+  })
+ 
+}
+close(pb)
+colnames(final_export) <- c("P", "P", "C", "1B", "2B", "3B", "SS", "OF",  "OF", "OF")
+
+write.csv(final_export, "C:/Users/jorda/Downloads/DKLineupsMLB.csv", row.names = FALSE)
+
+```
+
+### Lineup Editor
+```{r lineup-editor}
+
+### Build lineups above, then use this to edit entries for direct upload
+
+plineups <- read.csv("C:/Users/jorda/Downloads/DKEntriesMLB.csv")
+
+plineups <- filter(plineups, !is.na(Entry.ID) & !is.na(as.numeric(Entry.ID))) %>%
+  select(Entry.ID, Contest.Name, Contest.ID, Entry.Fee)
+
+newlineups <- read.csv("C:/Users/jorda/Downloads/DKLineupsMLB.csv")
+
+newlineups <- cbind(plineups, newlineups)
+colnames(newlineups) <- c("Entry ID", "Contest Name", "Contest ID", "Entry Fee", "P", "P", "C", "1B", "2B", "3B", "SS", "OF",  "OF", "OF")
+
+write.csv(newlineups, "C:/Users/jorda/Downloads/DKEntriesMLB.csv", row.names = FALSE)
+
+```
+
+
+### Late swap DK
+```{r late-swap}
+
+players_to_swap <- c("Keibert Ruiz", "Yuli Gurriel", "Jean Segura", "Jose Abreu", "Thairo Estrada", "Mauricio Dubon", "Mitch Haniger", "Chas McCormick", "Brad Miller", "CJ Abrams", "Dalton Guthrie", "Taylor Trammell", "Michael Chavis")
+
+
+oprojections <- read_sheet("https://docs.google.com/spreadsheets/d/105GoLzknZCxKhvd6BDQKZQnTD4SXYg5xU2bDRWFjsks/edit#gid=1676563604")
+
+plineups <- read.csv("C:/Users/jorda/Downloads/DKEntriesMLB.csv") %>%
+  filter(!is.na(Entry.ID), !is.na(as.numeric(Entry.ID)))
+
+pb <- txtProgressBar(0, nrow(plineups), style = 3)
+
+
+for(l in 1:nrow(plineups)){
+  
+  lineup <- t(plineups[l,5:14])
+  lineup <- as.numeric(gsub(".*?([0-9]+).*$", "\\1", lineup))
+  
+  rebuild <- oprojections %>%
+    filter(ID %in% lineup)
+  rebuild <- rebuild[match(lineup, rebuild$ID),]
+  rebuild$index <- c(1:10)
+  r_salary <- sum(rebuild$Salary)
+  
+  replace_in_build <- c()
+  for(p in players_to_swap){
+    if(p %in% rebuild$Name){
+
+        replace_in_build[length(replace_in_build)+1] <- p
+      
+    }
+  }
+  
+  replace_in_build <- rebuild %>%
+    filter(Name %in% replace_in_build)
+  
+  if(nrow(replace_in_build) > 0){
+    oprojections$late_swap_proj <- rnorm(nrow(oprojections), oprojections$DKfpts, oprojections$SD) + 7 * as.numeric(oprojections$Team %in% replace_in_build$Team) + 5 * as.numeric(oprojections$Team %in% rebuild$Team)
+    
+    oprojections$start_time <-strptime(gsub(" ET", "", gsub("/", "-", sub(".*? ", "", oprojections$`Game Info`))), format='%m-%d-%Y %I:%M%p')
+    
+    current_time <- Sys.time()
+    #current_time <- strptime("05-08-2023 08:30PM", format='%m-%d-%Y %I:%M%p')
+    
+    #replace_in_build$index <- which(rebuild$Name == replace_in_build$Name)
+    
+    pos_to_replace <- c("P", "P", "C", "1B", "2B", "3B", "SS", "OF",  "OF", "OF")[replace_in_build$index]
+    
+    nP <- sum(as.numeric(replace_in_build$index < 3))
+    nC <- sum(as.numeric(replace_in_build$index == 3))
+    n1b <- sum(as.numeric(replace_in_build$index == 4))
+    n2b <- sum(as.numeric(replace_in_build$index == 5))
+    n3b <- sum(as.numeric(replace_in_build$index == 6))
+    nSS <- sum(as.numeric(replace_in_build$index == 7))
+    nOF <- sum(as.numeric(replace_in_build$index > 7))
+    
+    available_to_swap <- oprojections %>%
+      filter(start_time > current_time, !ID %in% rebuild$ID)
+    
+    teams <- available_to_swap %>%
+      select(Team, Opp) %>%
+      unique()
+    
+    vP <- as.numeric(available_to_swap$Position == "P")
+    vC <- as.numeric(grepl("C", available_to_swap$Position, fixed = TRUE))
+    v1 <- as.numeric(grepl("1", available_to_swap$Position, fixed = TRUE))
+    v2 <- as.numeric(grepl("2", available_to_swap$Position, fixed = TRUE))
+    v3 <- as.numeric(grepl("3", available_to_swap$Position, fixed = TRUE))
+    vS <- as.numeric(grepl("SS", available_to_swap$Position, fixed = TRUE))
+    vOF <- as.numeric(grepl("OF", available_to_swap$Position, fixed = TRUE))
+    vplayers <- rep(1, length(vC))
+    vsalary <- available_to_swap$Salary
+    vreplacements <- as.numeric(available_to_swap$Name %in% players_to_swap)
+    vrestraint_satisfying <- rep(0, length(vC))
+    for(pos in pos_to_replace){
+      vrestraint_satisfying <- as.numeric(vrestraint_satisfying | grepl(pos, available_to_swap$Position, fixed = TRUE))
+    }
+
+    vteams <- c()
+
+    for(t in 1:nrow(teams)){
+     vteam <- as.numeric(available_to_swap$Team==teams$Team[t] & !available_to_swap$Position == "P")
+     vopp_pitcher <- as.numeric(available_to_swap$Opp == teams$Team[t] & available_to_swap$Position == "P")*5
+  
+     vteams <- c(vteams, vteam+vopp_pitcher)
+    }
+    
+    
+    
+matrix_vector <- c(vsalary, vplayers, v1, v2, v3, vS, vC, vOF, vP, vreplacements, vrestraint_satisfying, vteams) #vteams must be listed last
+
+
+matrix_vector[is.na(matrix_vector)] <- 0
+matrix_vector[is.infinite(matrix_vector)] <- 0
+
+const.mat = matrix(matrix_vector, nrow = length(matrix_vector)/nrow(available_to_swap), byrow = TRUE)
+# 
+# ## Define constraints and direction - 50000 salary
+const.rhs = c(50000-sum(rebuild$Salary)+sum(replace_in_build$Salary),    nrow(replace_in_build),   n1b, n2b,n3b, nSS, nC,   nOF,    nP, 0, nrow(replace_in_build))
+const.dir = c(                                                 "<=" ,                      "==",  ">=",">=",">=",">=",">=", ">=",   "==","==",                                 "==")
+
+for(t in 1:nrow(teams)){
+  const.dir <- c(const.dir, "<=")
+  const.rhs <- c(const.rhs, 5-sum(as.numeric(rebuild$Team == teams$Team[t]))+sum(as.numeric(replace_in_build$Team == teams$Team[t])))
+}
+
+# ### Optimize
+objective.in <- available_to_swap$late_swap_proj
+objective.in[is.nan(objective.in)] <- 0
+objective.in[is.na(objective.in)] <- 0
+objective.in[objective.in < 0] <- 0
+optimum = lp(direction = "max", objective.in, const.mat, const.dir, const.rhs, all.bin = TRUE)
+# 
+available_to_swap$optimal <- optimum$solution
+
+replacements <- available_to_swap %>%
+  filter(optimal == 1)
+
+if(nrow(replacements) > 1){
+  needs_ordered <- T
+  while(needs_ordered){
+  replacements <- replacements[sample(1:nrow(replacements)),]
+  
+  needs_ordered <- F
+  
+  p <- 1
+  while(p <= nrow(replacements) & !needs_ordered){
+      needs_ordered <- !grepl(pos_to_replace[p], replacements$Position[p], fixed = TRUE)
+    
+    p <- p+1
+  }
+  
+  #if(grepl("C", lineup$Position[1], fixed = TRUE) & grepl("1", lineup$Position[2], fixed = TRUE) & grepl("2", lineup$Position[3], fixed = TRUE) & grepl("3", lineup$Position[4], fixed = TRUE) & grepl("SS", lineup$Position[5], fixed = TRUE) & grepl("OF", lineup$Position[6], fixed = TRUE) & grepl("OF", lineup$Position[7], fixed = TRUE) & grepl("OF", lineup$Position[8], fixed = TRUE)) needs_ordered <- F
+  
+}
+}
+
+fixed_lineup <- rebuild$ID
+
+for(rep in 1:nrow(replacements)){
+  fixed_lineup[replace_in_build$index[rep]] <- replacements$ID[rep]
+}
+    if(l == 1){
+      export_to_dk <- fixed_lineup
+    }else{
+      export_to_dk <- rbind(export_to_dk, fixed_lineup)
+    }
+      
+ setTxtProgressBar(pb, l)
+  }else{
+    if(l == 1){
+      export_to_dk <- rebuild$ID
+    }else{
+      export_to_dk <- rbind(export_to_dk, rebuild$ID)
+    }
+    
+ setTxtProgressBar(pb, l)
+  }
+  
+}
+
+revised <- select(plineups, Entry.ID, Contest.Name, Contest.ID, Entry.Fee)
+
+newlineups <- cbind(revised, export_to_dk)
+colnames(newlineups) <- c("Entry ID", "Contest Name", "Contest ID", "Entry Fee", "P", "P", "C", "1B", "2B", "3B", "SS", "OF",  "OF", "OF")
+
+write.csv(newlineups, "C:/Users/jorda/Downloads/DKEntriesSwappedMLB.csv", row.names = FALSE)
+
+
+```
+
+### Showdown builder
+```{r showdown}
+
+
+## Parameters
+
+
+num_lineups <-100
+testing <- F
+#lineups <- data.frame(nrows = 6)
+pb <- txtProgressBar(0, num_lineups, style = 3)
+
+allowed_cpts <- NULL#c("Spencer Strider") # set to NULL to allow all captains
+
+lineups_w_p <- .80 # percent of lineups where a pitcher is forced; remaining lineups may still include a qb 
+max_ag_p <- 2 # max hitters ag opp pitcher
+#salary_per_team <- 6400 # minimum FLEX salary used  per team; so you don't get one-off Boston Scott in an onslaught
+my_lean <- "ATL"
+dart_throw_cutoff <- 3.5
+
+
+  if(!testing){
+SDOptimal <- read.csv("C:/Users/jorda/Downloads/MLB Projections - SDProjections.csv")
+
+SDOptimal <- filter(SDOptimal, DKfpts > 0)
+
+cpts <- filter(SDOptimal, Position == "CPT")
+flex <- filter(SDOptimal, !Position == "CPT")
+names <- flex$Name
+}
+
+j <- 1
+while(j <= num_lineups){
+  
+force_p <- runif(1) < lineups_w_p
+  
+teams <- SDOptimal %>%
+  select(Team) %>%
+  distinct()
+
+teams$tide <- rnorm(2, 0, .5)
+
+SDOptimal <- merge(SDOptimal, teams) %>%
+  mutate(proj = DKfpts * (1+tide) * case_when(Team == my_lean ~ 1.2, T~1)) %>%
+  select(-tide)
+
+SDOptimal$over_under <- as.numeric(runif(nrow(SDOptimal)) >= .5)
+
+## Set coefficients of the decision variables
+
+objective.in <- rnorm(nrow(SDOptimal), SDOptimal$DKfpts, SDOptimal$SD)
+
+
+
+## Create constraint matrix
+
+vsalary <- SDOptimal$Salary
+if(is.null(allowed_cpts)){
+  vcpt <- as.numeric(SDOptimal$Position == "CPT")
+}else{
+vcpt <- as.numeric(SDOptimal$Position == "CPT") * as.numeric(SDOptimal$Name %in% allowed_cpts)
+}
+vflex <- as.numeric(SDOptimal$Position == "UTIL")
+vnames <- c()
+for(n in 1:length(names)){
+  this_name <- as.numeric(SDOptimal$Name == names[n])
+  vnames <- c(vnames, this_name)
+}
+vteam1 <- as.numeric(SDOptimal$Team == teams$Team[1])
+vteam2 <- as.numeric(SDOptimal$Team == teams$Team[2])
+vplayers <- rep(1, length(vsalary))
+vforce_p <- as.numeric(SDOptimal$Strikeouts > 0)
+vmaxagp1 <- as.numeric(SDOptimal$Strikeouts > 0 & SDOptimal$Team == teams$Team[1])*(6-max_ag_p) +as.numeric(SDOptimal$Team == teams$Team[2])
+vmaxagp2 <- as.numeric(SDOptimal$Strikeouts > 0 & SDOptimal$Team == teams$Team[2])*(6-max_ag_p) +as.numeric(SDOptimal$Team == teams$Team[1])
+
+matrix_vector <- c(vsalary, vcpt, vflex, vteam1, vteam2, vplayers, vforce_p, vmaxagp1, vmaxagp2, vnames)
+const.mat = matrix(matrix_vector, nrow = length(matrix_vector)/length(SDOptimal$Team), byrow=TRUE)
+
+
+const.rhs = c(50000,   1,    5,    5,    5,    6, as.numeric(force_p),    6,    6)
+const.dir = c("<=", "==", "==", "<=", "<=", "==",                ">=", "<=", "<=")
+
+for(n in names){
+  const.rhs = c(const.rhs, 1)
+  const.dir = c(const.dir, "<=")
+}
+
+optimum =lp(direction = "max", objective.in, const.mat, const.dir, const.rhs, all.bin = TRUE)
+
+SDOptimal$optimal <- optimum$solution
+
+lineup <- filter(SDOptimal, optimal == 1)
+
+lineup <- lineup[order(lineup$Position),]
+lineup <- lineup$ID
+
+if(j > 1){
+  lineups <- rbind(lineups, lineup)
+  lineups <- unique(lineups)
+  j <- nrow(lineups)+1
+
+} else{
+  lineups <- lineup
+  j <- 2
+}
+
+setTxtProgressBar(pb, j-1)
+
+
+}
+
+columns <- c("CPT", "UTIL", "UTIL", "UTIL", "UTIL", "UTIL")
+colnames(lineups) <- columns
+
+CPTownership <- SDOptimal %>%
+  filter(Position == "CPT") %>%
+  select(Name, ID)
+FLEXownership <- SDOptimal %>%
+  filter(Position == "UTIL") %>%
+  select(Name, ID)
+
+CPTownership$CPT.Own <- 0
+FLEXownership$FLEX.Own <- 0
+
+for(i in 1:length(FLEXownership$Name)){
+  CPTownership$CPT.Own[i] = sum(lineups[,1] == CPTownership$ID[i])
+  FLEXownership$FLEX.Own[i] = sum(lineups[,2:6] == FLEXownership$ID[i])
+  
+}
+FLEXownership <- select(FLEXownership, -ID)
+CPTownership <- select(CPTownership, -ID)
+rm(ownership)
+ownership <- merge(CPTownership, FLEXownership, all = FALSE)
+ownership$FLEX.Own <- ownership$FLEX.Own/length(lineups[,1])*100
+ownership$CPT.Own <- ownership$CPT.Own/length(lineups[,1])*100
+
+ownership$total <- ownership$FLEX.Own + ownership$CPT.Own
+
+write.csv(lineups, "C:/Users/jorda/Downloads/DKLineupsMLB.csv", row.names = FALSE)
+
+
+```
+
+
+### Save results
+```{r study}
+
+### Export standings to csv
+### Upload to conteststandings sheet
+### Download justresults sheet as "MLB Projections - justresults.csv"
+### Run this chunk - will add results to existing data set
+
+### For multiple slates in a day - save projections with next line, then comment out; after results are saved, uncomment for the next slate
+
+saved_projections <- projections
+
+results <- read.csv("C:/Users/jorda/Downloads/MLB Projections - justresults.csv") %>%
+  rename(Name = Player) %>%
+  select(-Roster.Position)
+
+results <- merge(results, saved_projections)
+
+results <- select(results, colnames(saved_results))
+
+saved_results <- rbind(saved_results, results) %>%
+  unique()
+
+```
+
+
+### LM results
+```{r results}
+
+data <- saved_results
+
+pitchers <- data %>% filter(Position == "P")
+
+batters <- data %>% filter(!Position == "P")
+
+team_bats <- batters %>%
+  group_by(Team, `Game Info`) %>%
+  summarise(FPTS = sum(FPTS), DKfpts = sum(DKfpts), X.Drafted = sum(X.Drafted), team_implied_runs = mean(team_implied_runs), team_win_pct = mean(team_win_pct), HRs = sum(HRs), TotalBases = sum(TotalBases))
+
+opp_team_bats <- team_bats %>%
+  select(Team, `Game Info`, DKfpts, HRs, X.Drafted) %>%
+  rename(Opp = Team, opp_bats_DKfpts = DKfpts, opp_bats_HRs = HRs, opp_bats_drafted = X.Drafted)
+
+opp_pitcher <- pitchers %>%
+  select(Team, `Game Info`, DKfpts, X.Drafted, EarnedRuns, HitsAllowed, WalksAllowed) %>%
+  rename(Opp = Team, opp_p_DKfpts = DKfpts, opp_p_drafted = X.Drafted, opp_p_ER = EarnedRuns, opp_p_HA = HitsAllowed, opp_p_BB = WalksAllowed)
+
+batters <- merge(batters, opp_pitcher)
+team_bats <- merge(team_bats, opp_pitcher)
+pitchers <- merge(pitchers, opp_team_bats)
+
+lm_pitchers <- lm(FPTS ~ X.Drafted+team_win_pct+WalksAllowed+opp_bats_DKfpts + opp_bats_HRs + opp_bats_drafted, data = pitchers)
+summary(lm_pitchers)
+
+lm_batters <- lm(FPTS ~HRs + DKfpts + opp_p_HA , data = batters)
+summary(lm_batters)
+
+lm_team <- lm(FPTS ~ HRs + team_win_pct + team_implied_runs + DKfpts + X.Drafted + opp_p_drafted + opp_p_ER + opp_p_HA + opp_p_BB, data = team_bats)
+summary(lm_team)
+
+
+
+  ggplot() + 
+    geom_point(data = batters, aes(DKfpts, FPTS), colour= "blue") + 
+    geom_point(data = pitchers, aes(team_win_pct, DKfpts), colour= "red")
+
+```
+
+
+
+### FD optimizer
+```{r fd-optimizer}
+
+testing <- F
+use_downloaded_top_stacks <-T
+add_HR_rng <- T
+simplify <- F
+num_lineups <-100
+allow_one_batter_against_pitcher <- F ## currently not doing anything
+#bans <- NULL#c("TOR", "PIT", "CLE", "CHC")
+min_salary <- 32000
+own_cap <- .000 ## currently not doing anything
+bs_size <- 4 # Min size of "big stack" (either 4 or 5)
+boost_teams <- #c("TB")
+fade_teams <- NULL#c("ARI")
+small_boost <- NULL#c("LAA", "ATL", "SEA", "NYY", "BAL", "TOR")
+small_fade <- NULL#c( "MIN", "WAS", "TEX", "OAK", "SD", "NYM", "BOS", "ARI", "COL")
+boost_effect <- .25
+fade_effect <- .25
+sb_effect <- .1
+sf_effect <- .1
+top_pct_cutoff <-0.01
+
+timeout_threshhold <- .55
+rm(final_export)
+
+if(!testing){
+oprojections <- read_sheet("https://docs.google.com/spreadsheets/d/105GoLzknZCxKhvd6BDQKZQnTD4SXYg5xU2bDRWFjsks/edit#gid=1676563604")
+
+keep_ps <- oprojections %>%
+  filter(Team %in% bans, Name %in% allow_p_from_bans)
+
+oprojections <- oprojections%>%
+  filter(!Name %in% bans, !Team %in% bans, !is.na(Name), DKfpts >0, !(Name == "Max Muncy" & !Team == "LAD"), !(Name == "Carlos Perez" &!Team == "OAK"))
+
+if(length(allow_p_from_bans)>0) oprojections <- rbind(oprojections, keep_ps)
+}
+
+pb <- txtProgressBar(0, num_lineups, style = 3)
+
+oprojections <- filter(oprojections, TopPct >= top_pct_cutoff)
+
+
+if(use_downloaded_top_stacks){
+top_stacks <- read.csv("C:/Users/jorda/Downloads/MLB Projections - TopStacks.csv")
+
+for(i in 2:ncol(top_stacks)){
+top_stacks[,i] <- as.numeric(sub("%", "", top_stacks[,i]))
+
+}
+
+manipulation <- select(oprojections, Team, Position, Opp)
+### make this index the top stacks tool for manipulation
+# manipulation <- mutate(manipulation, multiplier = case_when(
+#   Position == "P" ~ top_stacks$Kelly.[which(top_stacks$Team == Opp)],
+#   T ~ top_stacks$Kelly.[which(top_stacks$Team == Team)]
+# )) 
+
+man_factor <- top_stacks$FDRelativeGoalOwn
+#man_factor <- (man_factor-mean(man_factor, na.rm = TRUE))/sd(man_factor, na.rm = TRUE)
+
+vman <- c()
+for(i in 1:nrow(manipulation)){
+  vman[i] <- case_when(
+  manipulation$Position[i] == "P" ~ 0,
+  T ~ man_factor[which(top_stacks$Team == manipulation$Team[i])]
+)
+}
+
+manipulation <- vman/100+1#/max(max(man_factor, na.rm = T), abs(min(man_factor, na.rm = T)))+1
+
+}else{
+
+manipulation <- as.numeric(oprojections$Team %in% boost_teams & !oprojections$Position == "P")*boost_effect - as.numeric(oprojections$Team %in% fade_teams & !oprojections$Position == "P")*fade_effect - as.numeric(oprojections$Opp %in% boost_teams & oprojections$Position == "P")*boost_effect/2 + as.numeric(oprojections$Opp %in% fade_teams & oprojections$Position == "P")*fade_effect/2 + as.numeric(oprojections$Team %in% small_boost & !oprojections$Position == "P")*sb_effect - as.numeric(oprojections$Team %in% small_fade & !oprojections$Position == "P")*sf_effect - as.numeric(oprojections$Opp %in% small_boost & oprojections$Position == "P")*sb_effect/2 + as.numeric(oprojections$Opp %in% small_fade & oprojections$Position == "P")*sf_effect/2 + 1
+}
+
+### Convert DKfpts to FD values
+oprojections <- mutate(oprojections, DKfpts == case_when(FDPosition == "P" ~ Strikeouts*3 -3*EarnedRuns+6*team_win_pct+1.3*(as.numeric(Outs>15)),
+                                                         T ~ 18.7*HRs + 3*Singles + 6*Doubles + 3.5*RBIs + 3.2*Runs + 3*Walks +6*StolenBases),
+                       SD = SD*1.2)
+
+oprojections$sixtieth_percentile <- qnorm(.5, mean = oprojections$DKfpts, sd = oprojections$SD) ### Cash line requirement
+oprojections$ninetieth_percentile <- qnorm(.85, mean = oprojections$DKfpts, sd = oprojections$SD) ### GPP-winning requirement
+oprojections$abs_ceiling <- qnorm(.95, mean = oprojections$DKfpts, sd = oprojections$SD) ### GPP-winning requirement
+
+cash_line <- sum(slice_max(filter(oprojections, Position == "P"), sixtieth_percentile, n=1)$sixtieth_percentile) + max(max(filter(oprojections, grepl("1B", Position, fixed = TRUE))$sixtieth_percentile), max(filter(oprojections, grepl("C", Position, fixed = TRUE))$sixtieth_percentile))+ max(filter(oprojections, grepl("2B", Position, fixed = TRUE))$sixtieth_percentile)+ max(filter(oprojections, grepl("3B", Position, fixed = TRUE))$sixtieth_percentile)+ max(filter(oprojections, grepl("SS", Position, fixed = TRUE))$sixtieth_percentile)+ sum(slice_max(filter(oprojections, grepl("OF", Position, fixed = TRUE)), sixtieth_percentile, n=3)$sixtieth_percentile)+12
+
+winning_line <- sum(slice_max(filter(oprojections, Position == "P"), ninetieth_percentile, n=1)$ninetieth_percentile) + max(max(filter(oprojections, grepl("1B", Position, fixed = TRUE))$ninetieth_percentile), max(filter(oprojections, grepl("C", Position, fixed = TRUE))$ninetieth_percentile))+ max(filter(oprojections, grepl("2B", Position, fixed = TRUE))$ninetieth_percentile)+ max(filter(oprojections, grepl("3B", Position, fixed = TRUE))$ninetieth_percentile)+ max(filter(oprojections, grepl("SS", Position, fixed = TRUE))$ninetieth_percentile)+ sum(slice_max(filter(oprojections, grepl("OF", Position, fixed = TRUE)), ninetieth_percentile, n=3)$ninetieth_percentile)+20
+
+
+##################################################################
+####################### BEGIN LOOP ###############################
+##################################################################
+
+
+n <- 0
+while(n < num_lineups){
+  
+    tryCatch(expr = {withTimeout({
+  
+      
+      {
+projections <- oprojections
+
+if(add_HR_rng){
+  projections$build_proj <- rnorm(nrow(projections), mean = projections$DKfpts-projections$HRs*18.7, sd = projections$SD-projections$HRs*12)
+  hit_a_homer <- runif(nrow(projections)) < projections$HRs
+  projections$build_proj <- projections$build_proj * manipulation + as.numeric(hit_a_homer)
+  
+}else{
+  projections$build_proj <- rnorm(nrow(projections), mean = projections$DKfpts, sd = projections$SD)
+  projections$build_proj <- projections$build_proj * manipulation
+}
+
+batters <- filter(projections, !is.na(Order))
+pitchers <- filter(projections, FDPosition == "P")
+
+teams <- projections %>%
+  select(Team, Opp) %>%
+  unique()
+
+stacks <- c(gsub(" ", "", paste0(teams, "4")), gsub(" ", "", paste0(teams, "3")),gsub(" ", "", paste0(teams, "2")))
+
+stack4 <- batters%>%
+  group_by(Team)%>%
+  slice_max(order_by = build_proj, n = 4) 
+
+summarise_stack4 <- stack4 %>%
+  summarise(build_proj = sum(build_proj),
+            FDSalary = sum(FDSalary),
+            n1 = sum(grepl("1B", FDPosition, fixed = TRUE)),
+            n2 = sum(grepl("2B", FDPosition, fixed = TRUE)),
+            n3 = sum(grepl("3B", FDPosition, fixed = TRUE)),
+            nSS = sum(grepl("SS", FDPosition, fixed = TRUE)),
+            nC = sum(grepl("C", FDPosition, fixed = TRUE)),
+            nOF = sum(grepl("OF", FDPosition, fixed = TRUE))
+  )%>%
+  mutate(stack_size = 4)
+
+stack3 <- batters%>%
+  group_by(Team)%>%
+  slice_max(order_by = build_proj, n = 3) 
+
+summarise_stack3 <- stack3 %>%
+  summarise(build_proj = sum(build_proj),
+            FDSalary = sum(FDSalary),
+            n1 = sum(grepl("1B", FDPosition, fixed = TRUE)),
+            n2 = sum(grepl("2B", FDPosition, fixed = TRUE)),
+            n3 = sum(grepl("3B", FDPosition, fixed = TRUE)),
+            nSS = sum(grepl("SS", FDPosition, fixed = TRUE)),
+            nC = sum(grepl("C", FDPosition, fixed = TRUE)),
+            nOF = sum(grepl("OF", FDPosition, fixed = TRUE))
+  )%>%
+  mutate(stack_size = 3)
+
+stack2 <- batters%>%
+  group_by(Team)%>%
+  slice_max(order_by = build_proj, n = 2) 
+
+summarise_stack2 <- stack2 %>%
+  summarise(build_proj = sum(build_proj),
+            FDSalary = sum(FDSalary),
+            n1 = sum(grepl("1B", FDPosition, fixed = TRUE)),
+            n2 = sum(grepl("2B", FDPosition, fixed = TRUE)),
+            n3 = sum(grepl("3B", FDPosition, fixed = TRUE)),
+            nSS = sum(grepl("SS", FDPosition, fixed = TRUE)),
+            nC = sum(grepl("C", FDPosition, fixed = TRUE)),
+            nOF = sum(grepl("OF", FDPosition, fixed = TRUE))
+  )%>%
+  mutate(stack_size = 2)
+
+
+
+
+stack_list <- rbind(summarise_stack4,summarise_stack3, summarise_stack2) %>%
+  merge(teams) %>%
+  mutate(Name = paste0(Team,stack_size), nP = 0)
+
+stack_list <- select(stack_list, Name, FDSalary, build_proj, Team, Opp, n1, n2, n3, nSS, nC, nOF, nP, stack_size)
+
+batters <- mutate(batters, stack_size = 1, n1 = grepl("1B", Position, fixed = TRUE),
+            n2 = grepl("2B", FDPosition, fixed = TRUE),
+            n3 = grepl("3B", FDPosition, fixed = TRUE),
+            nSS = grepl("SS", FDPosition, fixed = TRUE),
+            nC = grepl("C", FDPosition, fixed = TRUE),
+            nOF = grepl("OF", FDPosition, fixed = TRUE), 
+            nP = 0, 
+            stack_size = 1) %>%
+  select(Name, FDSalary, build_proj, Team, Opp, n1, n2, n3, nSS, nC, nOF, nP, stack_size)
+
+pitchers <- mutate(pitchers, stack_size = 1,n1 = 0,
+            n2 = 0,
+            n3 = 0,
+            nSS = 0,
+            nC = 0,
+            nOF = 0,
+            nP = 1,
+            stack_size = 1) %>%
+  select(Name, FDSalary, build_proj, Team, Opp, n1, n2, n3, nSS, nC, nOF, nP, stack_size)
+
+all_considerations <- rbind(stack_list, pitchers, batters)
+
+vstack <- as.numeric(all_considerations$stack_size > 1)
+vplayers <- all_considerations$stack_size
+vunstacked <- as.numeric(all_considerations$stack_size == 1 & all_considerations$nP == 0)
+vbig_stack <- as.numeric(all_considerations$stack_size == bs_size)
+vthree_stack <- as.numeric(all_considerations$stack_size == 3)
+vc1b <- all_considerations$n1+all_considerations$nC
+v2b <- all_considerations$n2
+v3b <- all_considerations$n3
+vss <- all_considerations$nSS
+vOF <- all_considerations$nOF
+vP <- all_considerations$nP
+vsalary <- all_considerations$FDSalary
+
+vteams <- c()
+
+for(t in 1:nrow(teams)){
+  vteam <- as.numeric(all_considerations$Team==teams$Team[t] & all_considerations$nP == 0)
+  vopp_pitcher <- as.numeric(all_considerations$Opp == teams$Team[t] & all_considerations$nP== 1)
+  
+  vteams <- c(vteams, vteam+vopp_pitcher)
+}
+
+req_three_stack <- as.numeric(bs_size < 5)
+
+matrix_vector <- c(vsalary, vsalary, vstack, vunstacked, vbig_stack, vplayers, vc1b, v2b, v3b, vss, vOF, vP, vthree_stack, vteams) #vteams must be listed last
+
+
+matrix_vector[is.na(matrix_vector)] <- 0
+matrix_vector[is.infinite(matrix_vector)] <- 0
+
+const.mat = matrix(matrix_vector, nrow = length(matrix_vector)/nrow(all_considerations), byrow = TRUE)
+# 
+# ## Define constraints and direction - 50000 salary
+const.rhs = c(35000, min_salary,    2,   1,    1,   9,   1,   1,    1,    1,    3,     1, req_three_stack)
+const.dir = c("<=" ,       ">=", "==","==", "==","==",">=",">=", ">=", ">=",">=",   "==",  "==")
+
+for(t in 1:nrow(teams)){
+  const.dir <- c(const.dir, "<=")
+  const.rhs <- c(const.rhs, 1)
+}
+
+
+# 
+# ### Optimize
+objective.in <- all_considerations$build_proj
+objective.in[is.nan(objective.in)] <- 0
+objective.in[is.na(objective.in)] <- 0
+objective.in[objective.in < 0] <- 0
+optimum = lp(direction = "max", objective.in, const.mat, const.dir, const.rhs, all.bin = TRUE)
+# 
+all_considerations$optimal <- optimum$solution
+
+
+lineup <- all_considerations %>%
+  filter(optimal == 1)
+
+one_offs <- lineup %>%
+  filter(stack_size == 1)
+
+stacks_used <- lineup %>%
+  filter(stack_size > 1)
+
+stack1 <- batters %>%
+  filter(Team == stacks_used$Team[1]) %>%
+  slice_max(order_by = build_proj, n = stacks_used$stack_size[1])
+
+stack2 <- batters %>%
+  filter(Team == stacks_used$Team[2]) %>%
+  slice_max(order_by = build_proj, n = stacks_used$stack_size[2])
+
+lineup <- rbind(select(one_offs, -optimal), stack1, stack2)
+
+ids <- projections %>%
+  filter(Name %in% lineup$Name) %>%
+  select(Name, FDID, FDPosition, sixtieth_percentile, abs_ceiling)
+
+lineup <- merge(lineup, ids)
+
+if(sum(lineup$abs_ceiling)>winning_line && sum(lineup$build_proj) >cash_line){
+
+
+p_used <- lineup %>% filter(FDPosition == "P")
+fix_lineup <- filter(lineup, !Name %in% p_used$Name) %>%
+  mutate(order = case_when(
+    grepl("/", FDPosition, fixed = TRUE) ~ 0,
+    grepl("C", FDPosition, fixed = TRUE) ~ 1,
+    grepl("1", FDPosition, fixed = TRUE) ~ 1,
+    grepl("2", FDPosition, fixed = TRUE) ~ 2,
+    grepl("3", FDPosition, fixed = TRUE) ~ 3,
+    grepl("SS", FDPosition, fixed = TRUE) ~ 4,
+    grepl("OF", FDPosition, fixed = TRUE) ~ 5
+    
+  ))
+
+
+ordered_lineup <- fix_lineup %>%
+  filter(!order == 0)
+
+fix_lineup <- filter(fix_lineup, order == 0)
+
+missing_pos_order <- c(1:5)[!c(1:5) %in% ordered_lineup$order]
+missing_pos <- c("C/1B", "2B", "3B", "SS", "OF")[missing_pos_order]
+
+OFs <- nrow(filter(ordered_lineup, FDPosition == "OF"))
+
+while(OFs < 3){
+  missing_pos_order[length(missing_pos_order)+1] <- 5
+  missing_pos[length(missing_pos)+1] <- "OF"
+  OFs <- OFs + 1
+}
+
+needs_ordered <- nrow(ordered_lineup) < 8
+
+if(length(missing_pos_order) == nrow(fix_lineup)){
+while(needs_ordered){
+  fix_lineup <- fix_lineup[sample(1:nrow(fix_lineup)),]
+  
+  needs_ordered <- F
+  
+  p <- 1
+  while(p <= nrow(fix_lineup) & !needs_ordered){
+    if(missing_pos[p]=="C/1B"){
+      needs_ordered <- !grepl("C", fix_lineup$FDPosition[p], fixed = TRUE) || !grepl("1B", fix_lineup$FDPosition[p], fixed = TRUE)
+    }else{
+      needs_ordered <- !grepl(missing_pos[p], fix_lineup$FDPosition[p], fixed = TRUE)
+    }
+    
+    p <- p+1
+  }
+  
+  #if(grepl("C", lineup$Position[1], fixed = TRUE) & grepl("1", lineup$Position[2], fixed = TRUE) & grepl("2", lineup$Position[3], fixed = TRUE) & grepl("3", lineup$Position[4], fixed = TRUE) & grepl("SS", lineup$Position[5], fixed = TRUE) & grepl("OF", lineup$Position[6], fixed = TRUE) & grepl("OF", lineup$Position[7], fixed = TRUE) & grepl("OF", lineup$Position[8], fixed = TRUE)) needs_ordered <- F
+  
+}
+
+  
+  if(nrow(ordered_lineup)<8){
+fix_lineup$order <- missing_pos_order
+fix_lineup <- rbind(fix_lineup, ordered_lineup)
+  }else{
+  fix_lineup <- ordered_lineup
+  }
+  
+lineup <- fix_lineup[order(fix_lineup$order),]
+
+if(nrow(filter(lineup, order == 1)) > 1){
+  lineup$order[1] <- 6
+} else if(nrow(filter(lineup, order == 2)) > 1){
+  lineup$order[2] <- 6
+} else if(nrow(filter(lineup, order == 3)) > 1){
+  lineup$order[3] <- 6
+} else if(nrow(filter(lineup, order == 4)) > 1){
+  lineup$order[4] <- 6
+}
+
+lineup <- lineup[order(lineup$order),]
+
+lineup <- select(lineup, -order)
+
+lineup <- rbind(p_used, lineup)
+
+export <- lineup$FDID
+
+
+if(n==0){
+  final_export <-export
+  n <- 1
+
+}else{
+  final_export <- rbind(final_export, export)
+  final_export <- unique(final_export)
+  n <- nrow(final_export)
+}
+
+ setTxtProgressBar(pb, n)
+}
+}
+}
+    }, timeout = timeout_threshhold)}, TimeoutException = function(ex) {#cat("\nTimeout. Lineups built so far: ", n-1, "/", num_lineups," \n")
+  })
+ 
+}
+close(pb)
+colnames(final_export) <- c("P", "C/1B", "2B", "3B", "SS", "OF",  "OF", "OF", "UTIL")
+
+write.csv(final_export, "C:/Users/jorda/Downloads/FDLineupsMLB.csv", row.names = FALSE)
+
+```
+
+
+
+### FD lineup editor
+```{r fd-lineup-editor}
+
+plineups <- read.csv("C:/Users/jorda/Downloads/FDEntriesMLB.csv")
+
+plineups <- filter(plineups, !is.na(entry_id) & !is.na(as.numeric(entry_id))) %>%
+  select(entry_id, contest_id,contest_name)
+
+newlineups <- read.csv("C:/Users/jorda/Downloads/FDLineupsMLB.csv")
+
+newlineups <- cbind(plineups, newlineups)
+colnames(newlineups) <- c("entry_id", "contest_id", "contest_name", "P", "C/1B", "2B", "3B", "SS", "OF",  "OF", "OF", "UTIL")
+
+write.csv(newlineups, "C:/Users/jorda/Downloads/FDEntriesMLB.csv", row.names = FALSE)
+
+```
+
