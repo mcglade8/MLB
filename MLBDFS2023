@@ -89,7 +89,7 @@ system.time({
 testing <-F
 edit_current_lineups <-F
 
-build_lineups <-171
+build_lineups <-65
 #use_lineups <- 20 # attached to bsa function; currently not included, so build_lineups will determine exported lineups as well
 bans <- NULL#c("MIN", "DET", "Bailey Ober", "Michael Lorenzen", "Eduardo Escobar") # only bans batters if using team abbrev; add pitchers with their name (eg. PPD threats)
 locks <- NULL#c("Spencer Strider") # Names of players which will be locked
@@ -97,9 +97,9 @@ proportion_of_considerations <- .5 # range from .5 on large slates to .7 on smal
 min_salary <- 47000 # Going below 47000 seems to hurt the build. Just let it sit there.
 bs_size <- 5# Min size of "big stack" (either 4 or 5); 5 seems to work best regardless of slate size
 ev_min <- 2 #2 seems to work best more often than anything else
-allow_batters_against_pitcher <- F # Really only viable in 2-game slates
+allow_batters_against_pitcher <- F# Really only viable in 2-game slates
 cov_est <- 14 ### Covariance estimate for stacks- higher = more correlation via high stack SD
-assume_abs <- 4 ### number of atbats to simulate for each player; 4 seems reasonable
+assume_abs <- 4 ### number of atbats to simulate for each player; 4 seems reasonable; MUST be an int
 rand_stack <-F ### randomly selects a stack before building
 
 keep_ps <- oprojections %>%
@@ -348,7 +348,7 @@ stack5 <- batters%>%
   mutate(sd2 = SD^2)
 
 summarise_stack5 <- stack5 %>%
-  summarise(build_proj = case_when(project_after_stack ~ sum(DKfpts), T~ sum(build_proj)),
+  summarise(build_proj = sum(build_proj),
             Salary = sum(Salary),
             n1 = sum(grepl("1B", Position, fixed = TRUE)),
             n2 = sum(grepl("2B", Position, fixed = TRUE)),
@@ -367,7 +367,7 @@ stack4 <- batters%>%
   mutate(sd2 = SD^2)
 
 summarise_stack4 <- stack4 %>%
-  summarise(build_proj = case_when(project_after_stack ~ sum(DKfpts), T~ sum(build_proj)),
+  summarise(build_proj =sum(build_proj),
             Salary = sum(Salary),
             n1 = sum(grepl("1B", Position, fixed = TRUE)),
             n2 = sum(grepl("2B", Position, fixed = TRUE)),
@@ -385,7 +385,7 @@ stack3 <- batters%>%
   mutate(sd2 = SD^2)
 
 summarise_stack3 <- stack3 %>%
-  summarise(build_proj = case_when(project_after_stack ~ sum(DKfpts), T~ sum(build_proj)),
+  summarise(build_proj = sum(build_proj),
             Salary = sum(Salary),
             n1 = sum(grepl("1B", Position, fixed = TRUE)),
             n2 = sum(grepl("2B", Position, fixed = TRUE)),
@@ -403,7 +403,7 @@ stack2 <- batters%>%
   mutate(sd2 = SD^2)
 
 summarise_stack2 <- stack2 %>%
-  summarise(build_proj = case_when(project_after_stack ~ sum(DKfpts), T~ sum(build_proj)),
+  summarise(build_proj = sum(build_proj),
             Salary = sum(Salary),
             n1 = sum(grepl("1B", Position, fixed = TRUE)),
             n2 = sum(grepl("2B", Position, fixed = TRUE)),
@@ -3264,10 +3264,10 @@ for(p in 1:nrow(pgq)){
 p_to_sim <- pgq[p,]
 aa <- round(assume_abs+pgq$ImpTot[p], digits=0)
 
-p_hrs <- p_to_sim$HRs[1]/aa
-p_s <- p_to_sim$Singles[1]/aa
-p_d <- p_to_sim$Doubles[1]/aa
-p_w <- p_to_sim$Walks[1]/aa
+p_hrs <- p_to_sim$HRs[1]/assume_abs
+p_s <- p_to_sim$Singles[1]/assume_abs
+p_d <- p_to_sim$Doubles[1]/assume_abs
+p_w <- p_to_sim$Walks[1]/assume_abs
 
 p_abr <- c(p_hrs, p_s, p_d, p_w)
 
@@ -3303,6 +3303,7 @@ build
 
 simPitchers <- function(pitcher_lines, game_quality, player_gq){
   
+  pitcher_lines <- pitcher_lines[complete.cases(pitcher_lines),]
   game_quality <- select(game_quality, -Opp) %>%
     rename(Opp = Team)
     
