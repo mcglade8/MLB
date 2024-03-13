@@ -14,24 +14,6 @@ library(zoo)
 library(TTR)
 ```
 
-## R Markdown
-
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
-```
-
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
-
 
 
 ###Mookie Betts Vignette
@@ -144,16 +126,16 @@ MLBbref2 <-subset(MLBbref, Tm!="" & Tm!="League Average" & Tm !="Tm")
 ## (!!!Optional!!! - First) Gather all at-bats between start and end date
 ```{r acquire knowledge}
 
-start_date = "2022-06-17"
+start_date = "2022-05-17"
 end_date = "2022-06-17"
 
 
 ## Get all stats between start and end dates
-batter_stats <- bref_daily_batter("2022-04-07", end_date) %>%
+batter_stats <- bref_daily_batter(start_date, end_date) %>%
   rename(batter_name = Name)
 
 
-pitcher_stats <- daily_pitcher_bref("2022-04-07", end_date) %>%
+pitcher_stats <- daily_pitcher_bref(start_date, end_date) %>%
   rename(pitcher_name = Name)
 
 
