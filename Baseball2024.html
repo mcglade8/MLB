@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Baseball 2024</title>
+    <link rel="stylesheet" type="text/css" href="Baseball2024.css">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+</head>
+<body>
+    <div id="header">
+        <h1><em>Baseball 2024</em></h1>
+    </div>
+    <div id="flex-container">
+        <div id="sidebar">
+            <select id="highlight-select">
+                <option value="fpts">Top Projections</option>
+                <option value="jvalue">Top J-values</option>
+                <option value="oth">Top Odds To Hit</option>
+            </select>
+            <select id="site-select">
+                <option value="draftkings">DraftKings</option>
+                <option value="fanduel">FanDuel</option>
+                <option value="yahoo">Yahoo</option>
+            </select>
+            <table id="highlight-table">
+                
+            </table>
+        </div>
+        <div id="main">
+            <div id="nav">
+                <button id="home" class="nav-button selected">Players</button>
+                <button id="teams" class="nav-button">Builder</button>
+            </div>
+            <div id="content">  
+                <div id="players" class="show">
+                    <table id="players-table">
+                        
+                    </table>
+                </div>
+                <div id="builder" class="hide">
+                    <div id="build-constraints"></div>
+                    <table id="lineups-table">
+
+                    </table>
+                </div>
+            </div>  
+        </div>
+    </div>
+</body>
+<script type="text/javascript" src="Baseball2024.js"></script>
+</html>

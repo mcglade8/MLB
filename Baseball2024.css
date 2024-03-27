@@ -1,0 +1,61 @@
+body{
+    background: linear-gradient(.33turn, #EEEEEE, #FF3333);
+    font-family: 'Arial', sans-serif;
+    padding: 0;
+    width: 100%;
+}
+*{
+    margin: 0;
+    padding: 0;
+}
+select{
+    width: 100%;
+    padding: 10px;
+    font-size: 24px;
+}
+#header{
+    background: #000000;
+    color: #8888FF;
+    text-align: center;
+    width:100%;
+    padding: 10px 0px;
+}
+#flex-container{
+    display: flex;
+    width: 100%;
+}
+#main{
+    flex: 6;
+    overflow: auto;
+}
+#nav{
+    background: linear-gradient(.25turn, #888888, #000000);
+    font-size: 0;
+}
+#sidebar{
+    background: linear-gradient(.75turn, #888888, #000000);
+    flex: 1;
+    padding: 10px;
+    text-align: center;
+    height: 100vh;
+}
+.nav-button{
+    background: #8888FF;
+    color: white;
+    border: none;
+    padding: 10px;
+    font-size: 36px;
+    cursor: pointer;
+    height: 100%;
+}
+.selected{
+    background: linear-gradient(.37turn, #8888FF, #FF33FF);
+    color: black;
+    font-weight: bold;
+}
+table{
+    border-collapse: collapse;
+    width: 100%;
+    background: #EEEEEE;
+    padding: 10px;
+}
