@@ -11,7 +11,12 @@ body{
 select{
     width: 100%;
     padding: 10px;
-    font-size: 24px;
+    font-size: 20px;
+}
+input, button{
+    padding: 10px;
+    font-size: 20px;
+
 }
 #header{
     background: #000000;
@@ -40,22 +45,50 @@ select{
     height: 100vh;
 }
 .nav-button{
-    background: #8888FF;
-    color: white;
+    background:#AAAAFF;
+    color: black;
     border: none;
     padding: 10px;
     font-size: 36px;
     cursor: pointer;
     height: 100%;
+
+}
+.nav-button:hover{
+    background: radial-gradient(circle, #8888FF, #AAAAFF);
 }
 .selected{
-    background: linear-gradient(.37turn, #8888FF, #FF33FF);
+    background: #8888FF;
     color: black;
-    font-weight: bold;
 }
 table{
     border-collapse: collapse;
     width: 100%;
     background: #EEEEEE;
     padding: 10px;
+    border-left: 1px solid #888888;
+    border-right: 1px solid #888888;
+
+}
+th{
+    background: #8888FF;
+    color: white;
+    padding: 10px;
+}
+td{
+    padding: 10px;
+    text-align: center;
+    border: 1px solid #888888;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+tr:nth-child(even){
+    background: #DDDDDD;
+}
+.show{
+    display: block;
+}
+.hide{
+    display: none;
 }

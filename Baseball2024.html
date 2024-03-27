@@ -3,6 +3,8 @@
 <head>
     <title>Baseball 2024</title>
     <link rel="stylesheet" type="text/css" href="Baseball2024.css">
+    <script src="solver.js"></script>
+    <script src="require.js"></script>
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
 </head>
 <body>
@@ -11,12 +13,12 @@
     </div>
     <div id="flex-container">
         <div id="sidebar">
-            <select id="highlight-select">
+            <select id="highlight-select" onchange="fillHighlightTable()">
                 <option value="fpts">Top Projections</option>
                 <option value="jvalue">Top J-values</option>
                 <option value="oth">Top Odds To Hit</option>
             </select>
-            <select id="site-select">
+            <select id="site-select" onchange="prepareForSite()">
                 <option value="draftkings">DraftKings</option>
                 <option value="fanduel">FanDuel</option>
                 <option value="yahoo">Yahoo</option>
@@ -37,7 +39,49 @@
                     </table>
                 </div>
                 <div id="builder" class="hide">
-                    <div id="build-constraints"></div>
+                    <div id="build-constraints">
+                        <table id="constraints-table">
+                            <tr>
+                                <td>Stack Type:</td>
+                                <td>
+                                    <select id="stack-type">
+                                        <option value="No Rules">No Rules</option>
+                                        <option value="5-3">5-3</option>
+                                        <option value="5-2-1">5-2-1</option>
+                                        <option value="4-4">4-4</option>
+                                        <option value="4-3-1" selected>4-3-1</option>
+                                        <option value="4-2-2">4-2-2</option>
+                                        <option value="3-3-2">3-2-2</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    Number of lineups: <input type="number" id="num-lineups" value="20">
+                                    <button id="build-lineups" onclick="buildLineups()">Build Lineups</button>
+                                </td>
+                                <td>
+                                    <button id="download-lineups" onclick="downloadLineups()">Download Lineups</button>
+                                </td>
+                                <td>
+                                    Built: <text id="lineups-built">0</text>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>Allow batters vs pitchers:</td>
+                                <td>
+                                    <input type="radio" id="allow-bvp-yes" name="allow-bvp" value="yes">Yes
+                                    <input type="radio" id="allow-bvp-no" name="allow-bvp" value="no" checked>No
+                                </td>
+                                <td>
+                                    Old lineups: <input type="file" id="previous-lineups" oninput="handleLineupscsv()">
+                                </td>
+                                <td>
+                                    <button id="download-edited-lineups" onclick="downloadEditedLineups()">Download Edited Lineups</button>
+                                </td>
+                                <td>
+                                    <button id="clear-lineups" onclick="clearLineups()">Clear Lineups</button>
+                                </td>
+                            </tr>
+                    </div>
                     <table id="lineups-table">
 
                     </table>
