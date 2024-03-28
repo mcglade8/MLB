@@ -413,7 +413,6 @@ function convertVariablesToStacks(site, data, teams, stack_type){
             stacks[team + "-" + type] = this_stack;
         }
     }
-    console.log({...stacks, ...data});
 
     return {...stacks, ...data};
 }
@@ -442,11 +441,9 @@ function buildOneLineup(site, constraints, players, data){
         "binaries": variables
         
     };
-    console.log(model);
 
     require(['solver'], function(solver){
         var result = solver.Solve(model);
-        console.log(result);
         result = retrieveStacks(result, variables);
         var lineup = [];
         for(let player of players){
@@ -454,7 +451,6 @@ function buildOneLineup(site, constraints, players, data){
                 lineup.push(player);
             }
         }
-        //console.log(lineup);
         addLineupToTable(lineup, data);
     });
 
@@ -646,9 +642,15 @@ function downloadLineups(){
     var lineups = document.getElementById("lineups-table").rows;
     var csv = "data:text/csv;charset=utf-8,";
     for(let l of lineups){
-        for(let c of l.cells){
-            csv += c.innerHTML.split("<br>")[1]
-            if(c.cellIndex < l.length -1) csv += ",";
+        if(l.rowIndex == 0) {
+            for(let c of l.cells){
+                csv += c.innerHTML + ",";
+            }
+        }else{
+            for(let c of l.cells){
+                csv += c.innerHTML.split("<br>")[1] + ",";
+                //if(c.cellIndex < l.length -1) csv += ",";
+            }
         }
         csv += "\n";    
     }
