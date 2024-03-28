@@ -92,3 +92,11 @@ tr:nth-child(even){
 .hide{
     display: none;
 }
+.team-select{
+    background: #AAAAFF;
+    color: black;
+    border: 1px solid black;
+    text-overflow: ellipsis;
+    max-width: 150px;
+    max-height: 100px;
+}

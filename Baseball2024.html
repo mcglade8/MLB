@@ -42,6 +42,18 @@
                     <div id="build-constraints">
                         <table id="constraints-table">
                             <tr>
+                                <td>Top X Players:</td>
+                                <td>
+                                    <input type="number" id="num-top-plays" value="100">
+                                </td>
+                                <td>
+                                    <text>Omit teams:</text> <select id="in-play" class="team-select" onchange="moveTeam(this)"><option value="Choose..." selected>Choose...</option></select> Add back: <select onchange="moveTeam(this)" id="omitted" class="team-select"><option value="Choose..." selected>Choose...</option></select>
+                                </td>
+                                <td>
+                                    Variance: <input type="range" id="variance" min="0" max="100" value="50">
+                                </td>
+                            </tr>
+                            <tr>
                                 <td>Stack Type:</td>
                                 <td>
                                     <select id="stack-type">

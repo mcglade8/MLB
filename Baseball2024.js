@@ -25,6 +25,39 @@ function prepareForSite(){
     fillPlayersTable();
     initializeLineupsTable();
     fillHighlightTable();
+    fillOmitTeamsList();
+}
+
+// Move team from one list to the other
+function moveTeam(el){
+    var team_selects = document.getElementsByClassName("team-select");
+    for(let select of team_selects){
+        if(select.id != el.id){
+            var option = document.createElement("option");
+            option.text = el.options[el.selectedIndex].text;
+            option.value = el.value;
+            select.appendChild(option);
+        }
+    }
+    el.remove(el.selectedIndex);
+    el.value = "Choose...";
+}
+
+// Fill the omit teams list based on the teams in the JSON file
+function fillOmitTeamsList(){
+    var data = getInfoFromJSON("baseball_data.json");
+    var teams = [];
+    for(let player of Object.keys(data)){
+        if(!teams.includes(data[player]["Team"])) teams.push(data[player]["Team"]);
+    }
+    var list = document.getElementById("in-play");
+    teams.sort();
+    for(let team of teams){
+        var option = document.createElement("option");
+        option.text = team;
+        option.value = team;
+        list.appendChild(option);
+    }
 }
 
 // Fill the players table with the players from the JSON file
@@ -189,24 +222,66 @@ function sortData(data, highlight){
     return sortable;
 }
 
+// Grab the top # players from the data
+function filterForTopPlays(data){
+    var site = document.getElementById("site-select").value.toLowerCase();
+    var top_plays = {};
+    var num_top_plays = document.getElementById("num-top-plays").value;
+    // filter for the top plays based on jvalue for selected site
+    var criteria = site + "-jvalue";
+    var sorted_data = sortData(data, criteria);
+    for(let i = 0; i < num_top_plays; i++){
+        top_plays[sorted_data[i][0]] = data[sorted_data[i][0]];
+    }
+    return top_plays;
+}
+
+// sort the data based on the selected highlight
+function sortData(data, highlight){
+    var omitted_teams = document.getElementById("omitted").options;
+    for(let team of omitted_teams){
+        if(team.value != "Choose..."){
+            for(let player of Object.keys(data)){
+                if(data[player]["Team"] == team.value){
+                    delete data[player];
+                }
+            }
+        }
+    }
+    var sortable = [];
+    for(let player of Object.keys(data)){
+        sortable.push([player, Number(data[player][highlight])]);
+    }
+    sortable.sort(function(a, b){
+        return b[1] - a[1];
+    });
+
+    return sortable;
+}
+
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // Build lineups based on the constraints and the selected DFS site
 async function buildLineups(){
     var site = document.getElementById("site-select").value.toLowerCase();
-    var data = getInfoFromJSON("baseball_data.json");
+    var data = filterForTopPlays(getInfoFromJSON("baseball_data.json"));
     var constraints = getConstraints(site);
+    var stack_type = document.getElementById("stack-type").value.split("-");
+    for(let type of stack_type){
+        if(type != "1") constraints[type + "-stack"] = {"equal":1};
+    }
     var players = Object.keys(data);
     var number_of_lineups = document.getElementById("num-lineups").value;
     
     for(let i = 0, p = Promise.resolve(); i < number_of_lineups; i++){
-        p = p.then(() => delay(10))
-            .then(()=>buildOneLineup(site, constraints, players, data));
+        p = p.then(() => delay(Math.random() * 1500))
+            .then(()=> {return buildOneLineup(site, constraints, players, data)});
     }
 }
 
 // return constraints based on the selected DFS site
 function getConstraints(site){
+    
     switch(site){
         case "draftkings":
             return {
@@ -248,6 +323,7 @@ function getConstraints(site){
 
 // Convert players to variables for the solver
 function convertPlayersToVariables(site, players, data){
+    var teams = [];
     for(let player of players){
         var info = data[player];
         if(info[site + "-position"].includes("/")){
@@ -259,41 +335,142 @@ function convertPlayersToVariables(site, players, data){
         if(site == "fanduel"){
             if(["C", "1B"].includes(use_pos)) use_pos = "C/1B";
         }
-        data[player][site + "-fpts"] = randomizeProjection(info[site + "-fpts"], info["SD"]);
+        data[player][site + "-fpts"] = randomizeProjection(info[site + "-fpts"], info["stdev"]);
         data[player][use_pos] = 1;
         data[player][site + "-position"] = use_pos;
         data[player]["Players"] = 1;
+        if(info[site+"-position"] == "P"){ 
+            data[player][info["Opp"]] = 3;
+            data[player][info["Team"]] = 1;
+        }else{
+            data[player][info["Team"]] = 2;
+        }
+        if(!teams.includes(info["Team"])) teams.push(info["Team"]);
     }
-    return data;
+    
+    var stack_type = document.getElementById("stack-type").value.split("-");
+    data = convertVariablesToStacks(site, data, teams, stack_type);
+    // add the pitchers to the data
 
+    return [data, teams];
+
+}
+
+// Convert the variables to stacks for the solver
+function convertVariablesToStacks(site, data, teams, stack_type){
+    var stacks = {};
+    for(let team of teams){
+        var team_players = [];
+
+        for(let player of Object.keys(data)){
+            if("P" in data[player] || data[player]["Team"] != team){
+                continue;
+            }else{
+                team_players.push(data[player]);
+            }       
+        }
+        for(let type of stack_type){
+            // get the top 'type' players from the team
+            var num = Number(type);
+            if(num == 1 || num > team_players.length) continue;
+            var this_stack = {
+                "Players": num,
+                "draftkings-salary": 0,
+                "fanduel-salary": 0,
+                "yahoo-salary": 0,
+                "draftkings-fpts": 0,
+                "fanduel-fpts": 0,
+                "yahoo-fpts": 0,
+                "draftkings-jvalue": 0,
+                "fanduel-jvalue": 0,
+                "yahoo-jvalue": 0,
+                "C": 0,
+                "1B": 0,
+                "2B": 0,
+                "3B": 0,
+                "SS": 0,
+                "OF": 0,
+                "P": 0,
+                "C/1B": 0,
+                "stack_players" : []
+
+            };
+            this_stack[team] = 2;
+            this_stack[type+ "-stack"] = 1;
+            // only use the top num players based on site + "-fpts"
+            team_players.sort(function(a, b){
+                return b[site + "-fpts"] - a[site + "-fpts"];
+            });
+            for(let i = 0; i < num; i++){
+                this_stack["stack_players"].push(team_players[i]);//[site + "-id"]);
+                for(let info in this_stack){
+                    if(info == "Players" || info == team) continue;
+
+                    if(Number(team_players[i][info])) this_stack[info] += Number(team_players[i][info]);
+                    
+                }
+            }
+            stacks[team + "-" + type] = this_stack;
+        }
+    }
+    console.log({...stacks, ...data});
+
+    return {...stacks, ...data};
 }
 
 // Randomize the projection based on the standard deviation
 function randomizeProjection(projection, sd){
+    var variance = document.getElementById("variance").value;
+    sd = Number(sd) * (1 + (variance-50)/100);
     return Number((Number(projection) + (Math.random() * sd) + (Math.random() * sd) + (Math.random() * sd)-1.5 * sd).toFixed(1));
 }
 
 // Build one lineup based on the constraints and the players
 function buildOneLineup(site, constraints, players, data){
-    var variables = convertPlayersToVariables(site, players, data);
+    var converted = convertPlayersToVariables(site, players, data);
+    var variables = converted[0];
+    var teams = converted[1];
+    
+    for(let t of teams){
+        constraints[t] = {"max":3};
+    }
     var model = {
         "optimize": site + "-fpts",
         "opType": "max",
         "constraints": constraints,
         "variables": variables,
         "binaries": variables
+        
     };
+    console.log(model);
+
     require(['solver'], function(solver){
         var result = solver.Solve(model);
+        console.log(result);
+        result = retrieveStacks(result, variables);
         var lineup = [];
         for(let player of players){
-            if(result[player] > 0){
+            if(player in result){
                 lineup.push(player);
             }
         }
-        addLineupToTable(lineup, variables);
+        //console.log(lineup);
+        addLineupToTable(lineup, data);
     });
 
+}
+
+// Retrieve the stacks from the result
+function retrieveStacks(result, variables){
+    for(let key in result){
+        if(key.includes("-")){
+            var stack = variables[key];
+            for(let player of stack["stack_players"]){
+                result[player["Unique"]] = 1;
+            }
+        }
+    }
+    return result;
 }
 
 // Use headers to inform order of players
@@ -452,7 +629,7 @@ function addLineupToTable(result, players){
     if(!orderIsCorrect){
         table.deleteRow(row.rowIndex);
         console.log("Could not find valid lineup");
-        //buildOneLineup(site, getConstraints(site), Object.keys(players), players);
+        buildOneLineup(site, getConstraints(site), Object.keys(players), players);
         return;
     }
     for(let p of lineupPlayers){
