@@ -31,6 +31,7 @@
             <div id="nav">
                 <button id="home" class="nav-button selected">Players</button>
                 <button id="teams" class="nav-button">Builder</button>
+                <button id="ownership" class="nav-button" onclick="updateOwnership()">Ownership</button>
             </div>
             <div id="content">  
                 <div id="players" class="show">
@@ -51,6 +52,11 @@
                                 </td>
                                 <td>
                                     Variance: <input type="range" id="variance" min="0" max="100" value="50">
+                                </td>
+                                <td>
+                                    Allow batters vs pitchers?
+                                    <br><input type="radio" id="allow-bvp-yes" name="allow-bvp" value="yes">Yes
+                                    <input type="radio" id="allow-bvp-no" name="allow-bvp" value="no" checked>No
                                 </td>
                             </tr>
                             <tr>
@@ -78,10 +84,9 @@
                                 </td>
                             </tr>
                             <tr>
-                                <td>Allow batters vs pitchers:</td>
+                                <td>Min salary as pct of max</td>
                                 <td>
-                                    <input type="radio" id="allow-bvp-yes" name="allow-bvp" value="yes">Yes
-                                    <input type="radio" id="allow-bvp-no" name="allow-bvp" value="no" checked>No
+                                    <input type="number" id="min-salary" value="98" min="0" max="100">
                                 </td>
                                 <td>
                                     Old lineups: <input type="file" id="previous-lineups" oninput="handleLineupscsv()">
@@ -93,9 +98,15 @@
                                     <button id="clear-lineups" onclick="clearLineups()">Clear Lineups</button>
                                 </td>
                             </tr>
+                        </table>
                     </div>
                     <table id="lineups-table">
 
+                    </table>
+                </div>
+                <div id="ownership" class="hide">
+                    <table id="ownership-table">
+                        
                     </table>
                 </div>
             </div>  

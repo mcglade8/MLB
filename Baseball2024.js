@@ -26,6 +26,7 @@ function prepareForSite(){
     initializeLineupsTable();
     fillHighlightTable();
     fillOmitTeamsList();
+    document.getElementById("previous-lineups").value = "";
 }
 
 // Move team from one list to the other
@@ -266,12 +267,10 @@ async function buildLineups(){
     var site = document.getElementById("site-select").value.toLowerCase();
     var data = filterForTopPlays(getInfoFromJSON("baseball_data.json"));
     var constraints = getConstraints(site);
-    var stack_type = document.getElementById("stack-type").value.split("-");
-    for(let type of stack_type){
-        if(type != "1") constraints[type + "-stack"] = {"equal":1};
-    }
+    
     var players = Object.keys(data);
     var number_of_lineups = document.getElementById("num-lineups").value;
+    var lineups_built = document.getElementById("lineups-built").innerHTML;
     
     for(let i = 0, p = Promise.resolve(); i < number_of_lineups; i++){
         p = p.then(() => delay(Math.random() * 1500))
@@ -281,7 +280,7 @@ async function buildLineups(){
 
 // return constraints based on the selected DFS site
 function getConstraints(site){
-    
+    var min_salary = document.getElementById("min-salary").value;
     switch(site){
         case "draftkings":
             return {
@@ -293,7 +292,7 @@ function getConstraints(site){
                 "SS":{"min":1},
                 "OF":{"min":3},
                 "Players":{"equal":10},
-                "draftkings-salary":{"max":50000}
+                "draftkings-salary":{"max":50000, "min":min_salary*50000/100}
             };
         case "fanduel":
             return {
@@ -304,7 +303,7 @@ function getConstraints(site){
                 "SS":{"min":1},
                 "OF":{"min":3},
                 "Players":{"equal":9},
-                "fanduel-salary":{"max":35000}
+                "fanduel-salary":{"max":35000, "min":min_salary*35000/100}
             };
         case "yahoo":
             return {
@@ -316,44 +315,48 @@ function getConstraints(site){
                 "SS":{"min":1},
                 "OF":{"min":3},
                 "Players":{"equal":10},
-                "yahoo-salary":{"max":200}
+                "yahoo-salary":{"max":200, "min":min_salary*200/100}
             };
     }
 }
 
 // Convert players to variables for the solver
-function convertPlayersToVariables(site, players, data){
-    var teams = [];
-    for(let player of players){
-        var info = data[player];
-        if(info[site + "-position"].includes("/")){
-            var position = info[site + "-position"].split("/");
-            var use_pos = position[Math.floor(Math.random() * position.length)];
-        }else{
-            var use_pos = info[site + "-position"];
+async function convertPlayersToVariables(site, players, data){
+    let promise = new Promise((resolve, reject) => {
+        var teams = [];
+        for(let player of players){
+            var info = data[player];
+            if(info[site + "-position"].includes("/")){
+                var position = info[site + "-position"].split("/");
+                var use_pos = position[Math.floor(Math.random() * position.length)];
+            }else{
+                var use_pos = info[site + "-position"];
+            }
+            if(site == "fanduel"){
+                if(["C", "1B"].includes(use_pos)) use_pos = "C/1B";
+            }
+            data[player][site + "-fpts"] = randomizeProjection(info[site + "-fpts"], info["stdev"]);
+            data[player][use_pos] = 1;
+            data[player][site + "-position"] = use_pos;
+            data[player]["Players"] = 1;
+            if(info[site+"-position"] == "P"){ 
+                data[player][info["Opp"]] = document.getElementById("allow-bvp-yes").checked ? 1 : 3;
+                data[player][info["Team"]] = 1;
+            }else{
+                data[player][info["Team"]] = 2;
+            }
+            if(!teams.includes(info["Team"])) teams.push(info["Team"]);
         }
-        if(site == "fanduel"){
-            if(["C", "1B"].includes(use_pos)) use_pos = "C/1B";
-        }
-        data[player][site + "-fpts"] = randomizeProjection(info[site + "-fpts"], info["stdev"]);
-        data[player][use_pos] = 1;
-        data[player][site + "-position"] = use_pos;
-        data[player]["Players"] = 1;
-        if(info[site+"-position"] == "P"){ 
-            data[player][info["Opp"]] = 3;
-            data[player][info["Team"]] = 1;
-        }else{
-            data[player][info["Team"]] = 2;
-        }
-        if(!teams.includes(info["Team"])) teams.push(info["Team"]);
-    }
-    
-    var stack_type = document.getElementById("stack-type").value.split("-");
-    data = convertVariablesToStacks(site, data, teams, stack_type);
-    // add the pitchers to the data
-
-    return [data, teams];
-
+        resolve([data, teams]);
+    }).then((result) => {
+        var data = result[0];
+        var teams = result[1];
+        var stack_type = document.getElementById("stack-type").value.split("-");
+        data = convertVariablesToStacks(site, data, teams, stack_type);
+        return [data, teams];
+    });
+    //console.log(await promise);
+    return promise;
 }
 
 // Convert the variables to stacks for the solver
@@ -410,6 +413,7 @@ function convertVariablesToStacks(site, data, teams, stack_type){
                     
                 }
             }
+
             stacks[team + "-" + type] = this_stack;
         }
     }
@@ -421,14 +425,26 @@ function convertVariablesToStacks(site, data, teams, stack_type){
 function randomizeProjection(projection, sd){
     var variance = document.getElementById("variance").value;
     sd = Number(sd) * (1 + (variance-50)/100);
-    return Number((Number(projection) + (Math.random() * sd) + (Math.random() * sd) + (Math.random() * sd)-1.5 * sd).toFixed(1));
+    var new_proj = randNormal(Number(projection), sd);
+    return new_proj.toFixed(1);
+}
+
+function randNormal(mean, stdDev){
+    var u1 = Math.random();
+    var u2 = Math.random();
+    var randStdNormal = Math.sqrt(-2.0 * Math.log(u1)) * Math.sin(2.0 * Math.PI * u2);
+    return mean + stdDev * randStdNormal;
 }
 
 // Build one lineup based on the constraints and the players
-function buildOneLineup(site, constraints, players, data){
-    var converted = convertPlayersToVariables(site, players, data);
+async function buildOneLineup(site, constraints, players, data){
+    var converted = await convertPlayersToVariables(site, players, data);
     var variables = converted[0];
     var teams = converted[1];
+    var stack_type = document.getElementById("stack-type").value.split("-");
+    for(let type of stack_type){
+        if(type != "1") constraints[type + "-stack"] = {"equal":1};
+    }
     
     for(let t of teams){
         constraints[t] = {"max":3};
@@ -443,8 +459,18 @@ function buildOneLineup(site, constraints, players, data){
     };
 
     require(['solver'], function(solver){
+        console.log(model);
         var result = solver.Solve(model);
+        if(result.feasible == false){
+            console.log("No solution found");
+            //buildOneLineup(site, getConstraints(site), Object.keys(data), data);
+            return;
+        }
         result = retrieveStacks(result, variables);
+        if(result == "fail"){
+            //buildOneLineup(site, getConstraints(site), Object.keys(data), data);
+            return;
+        }        
         var lineup = [];
         for(let player of players){
             if(player in result){
@@ -460,8 +486,8 @@ function buildOneLineup(site, constraints, players, data){
 function retrieveStacks(result, variables){
     for(let key in result){
         if(key.includes("-")){
-            var stack = variables[key];
-            for(let player of stack["stack_players"]){
+            var stack = variables[key]["stack_players"];
+            for(let player of stack){
                 result[player["Unique"]] = 1;
             }
         }
@@ -604,12 +630,12 @@ function clearLineups(){
     document.getElementById('lineups-built').innerHTML = 0;
 }
 
-function addLineupToTable(result, players){
+function addLineupToTable(result, data){
     var table = document.getElementById("lineups-table");
     var row = table.insertRow(-1);
     var lineupPlayers = [];
     for(let p of result){
-        if(players[p] != undefined) lineupPlayers.push(players[p]);
+        if(data[p] != undefined) lineupPlayers.push(data[p]);
     }
 
     // randomize lineupPlayers order and finalize when order matches lineups-table headers
@@ -625,7 +651,7 @@ function addLineupToTable(result, players){
     if(!orderIsCorrect){
         table.deleteRow(row.rowIndex);
         console.log("Could not find valid lineup");
-        buildOneLineup(site, getConstraints(site), Object.keys(players), players);
+        buildOneLineup(site, getConstraints(site), Object.keys(data), data);
         return;
     }
     for(let p of lineupPlayers){
@@ -750,4 +776,53 @@ function cutOffYahooEntries(arr){
         new_arr.push(arr[i]);
     }
     return new_arr;
+}
+
+// add ownership table to the page based on number of times player appears in my built lineups
+function updateOwnership(){
+    var lineups = document.getElementById("lineups-table").rows;
+    var table = document.getElementById("ownership-table");
+    var headers = ["Rank", "Player", "Team", "Ownership"];
+    while(table.rows.length > 0){
+        table.deleteRow(-1);
+    }
+    var header = table.insertRow(-1);
+    for(let h of headers){
+        var cell = header.insertCell(-1);
+        cell.outerHTML = "<th>" + h + "</th>";
+    }
+    
+    
+    var ownership = {};
+    for(let l of lineups){
+        if(l.rowIndex == 0) continue;
+        for(let c of l.cells){
+            let name = c.innerHTML.split("<br>")[0];
+            let team = c.innerHTML.split("<br>")[3];
+            let id = c.innerHTML.split("<br>")[1];
+            if(!(id in ownership)){
+                ownership[id] = {"name": name, "team": team, "count": 1};
+            }else{
+                ownership[id]["count"]++;
+            }
+        }
+    }
+    var sortable = [];
+    for(let key in ownership){
+        sortable.push([key, ownership[key]]);
+    }
+    sortable.sort(function(a, b){
+        return b[1]["count"] - a[1]["count"];
+    });
+    for(let i = 0; i < sortable.length; i++){
+        var row = table.insertRow(-1);
+        var cell = row.insertCell(-1);
+        cell.innerHTML = i + 1;
+        cell = row.insertCell(-1);
+        cell.innerHTML = sortable[i][1]["name"];
+        cell = row.insertCell(-1);
+        cell.innerHTML = sortable[i][1]["team"];
+        cell = row.insertCell(-1);
+        cell.innerHTML = (100*sortable[i][1]["count"]/(lineups.length-1)).toFixed(1) + "%";
+    }
 }

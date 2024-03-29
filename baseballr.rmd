@@ -391,17 +391,6 @@ at_bat_result <- at_bat_result %>%
 
 
 
-high_upside_bats <- batters_by_game %>%
-  filter(game_fp >= 14) %>%
-  group_by(batter_name) %>%
-  summarise(big_games = n()) %>%
-  merge(batter_team, by = "batter_name")
-
-
-high_upside_teams <- high_upside_bats %>%
-  group_by(team) %>%
-  summarise(team_big_games = sum(big_games))
-
 
 ```
 
@@ -509,7 +498,7 @@ at_bat_result$ceiling_projection <- at_bat_result$sum_pitch_factors*at_bat_resul
 ```
 
 
-### (Fourth) Pitchers by game
+### (4.B) Pitchers by game
 ```{r project pitcher scoring by game}
 
 # pitchers_by_game<-c()
@@ -566,7 +555,7 @@ pitchers_by_game <- pitchers_by_game %>%
 
 # Best model yet but so many variables
 # # 
-lm_pitcher_full_game <- lm(game_fp ~ (mpdp + park_adjust + b_allowed_fps + p_earned_fps + sum_pitch_factors + H + HR + ERA + mean_batters_faced + IP + SO) / ( mad_fps + sum_bat_factors) , data = pitchers_by_game)
+lm_pitcher_full_game <- lm(game_fp ~ (mpdp + park_adjust + b_allowed_fps + p_earned_fps + sum_pitch_factors + H + HR + ERA + mean_batters_faced + IP + SO) / ( mad_fps + sum_bat_factors) , data = na.omit(pitchers_by_game))
 summary(lm_pitcher_full_game)
 # Adjusted R-squared:  0.3606
 
@@ -574,9 +563,11 @@ preds <- predict(lm_pitcher_full_game, pitchers_by_game)
 
 pitchers_by_game$pred <- preds
 
-lm_pitcher_second_level <- lm(game_fp ~ pred + mean_projection + ceiling_projection + sum_pitch_factors, data = pitchers_by_game)
+lm_pitcher_second_level <- lm(game_fp ~ pred + mean_projection , data = pitchers_by_game)
 summary(lm_pitcher_second_level)
 # Adjusted R-squared:  0.3851
+
+newpred <- predict(lm_pitcher_second_level, pitchers_by_game)
 
 
 pitchers_by_game %>%
@@ -585,7 +576,7 @@ pitchers_by_game %>%
 
 test_pred_manipulation <- pitchers_by_game %>%
   select(pred, game_fp) %>%
-  mutate(newpred = (10 + pred)/2+5)
+  mutate(newpred = newpred)
 
 
 test_pred_manipulation %>%
@@ -614,6 +605,24 @@ batters_by_game <- at_bat_result %>%
 # 
 # Warning in temp_vector[j] <- period_fps :
 #   number of items to replace is not a multiple of replacement length
+
+batter_team <- all_events_on_date %>%
+  select(matchup.batter.fullName, batting_team) %>%
+  rename(batter_name = matchup.batter.fullName, team = batting_team) %>%
+  distinct()
+
+
+
+high_upside_bats <- batters_by_game %>%
+  filter(game_fp >= 14) %>%
+  group_by(batter_name) %>%
+  summarise(big_games = n()) %>%
+  merge(batter_team, by = "batter_name")
+
+
+high_upside_teams <- high_upside_bats %>%
+  group_by(team) %>%
+  summarise(team_big_games = sum(big_games))
 
 
 ### Adds rhythm
@@ -873,10 +882,6 @@ batters_by_game %>%
   ggplot(aes(x=pred, y=game_fp)) +
   geom_point()
 
-batter_team <- all_events_on_date %>%
-  select(matchup.batter.fullName, batting_team) %>%
-  rename(batter_name = matchup.batter.fullName, team = batting_team) %>%
-  distinct()
 
 teams_by_game <- batters_by_game %>%
   merge(batter_team, by = "batter_name") %>%
@@ -911,12 +916,12 @@ teams_by_game %>%
 #### (Sixth) Get Starting Pitchers
 ```{r get starters}
 
-today = "2022-06-18"
+today = Sys.Date()
 
 
 home_teams_on_slate <- c("Boston Red Sox", "Los Angeles Dodgers", "Colorado Rockies", "Arizona Diamondbacks", "Seattle Mariners")
 
-todays_game_pks <- as.data.frame(mlb_schedule(season = 2022, level_ids = "1")) %>%
+todays_game_pks <- as.data.frame(mlb_schedule(season = 2024, level_ids = "1")) %>%
   filter(date == today) %>%
   select(game_pk, teams_away_team_name, teams_home_team_name)
 
@@ -1056,6 +1061,18 @@ todays_starters <- ts_hold
 todays_starters$preds <- (10+todays_starters$preds)/2 + 5
 
 rm(batting_teams_merged_stats)
+
+
+
+recent_stats <- batters_by_game %>%
+  group_by(batter_name) %>%
+  summarise(game_pk = last(game_pk)) %>%
+  mutate(ugID = paste(batter_name, game_pk)) %>%
+  merge(batters_by_game, by = "ugID") %>%
+  rename(batter_name = batter_name.x) %>%
+  merge(batter_stats, by = "batter_name")
+
+
 batting_teams_merged_stats <- recent_stats %>%
   filter(team %in% todays_starters$batting_team) %>%
   select(team, batter_name, bathand, av_pts_ab, mbdbL, mbdbR, fp_ema, big_games, rhythm_score, mad_fps) %>%
