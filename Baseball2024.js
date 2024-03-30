@@ -30,19 +30,19 @@ function prepareForSite(){
 }
 
 // Move team from one list to the other
-function moveTeam(el){
-    var team_selects = document.getElementsByClassName("team-select");
-    for(let select of team_selects){
-        if(select.id != el.id){
-            var option = document.createElement("option");
-            option.text = el.options[el.selectedIndex].text;
-            option.value = el.value;
-            select.appendChild(option);
-        }
-    }
-    el.remove(el.selectedIndex);
-    el.value = "Choose...";
-}
+// function moveTeam(el){
+//     var team_selects = document.getElementsByClassName("team-select");
+//     for(let select of team_selects){
+//         if(select.id != el.id){
+//             var option = document.createElement("option");
+//             option.text = el.options[el.selectedIndex].text;
+//             option.value = el.value;
+//             select.appendChild(option);
+//         }
+//     }
+//     el.remove(el.selectedIndex);
+//     el.value = "Choose...";
+// }
 
 // Fill the omit teams list based on the teams in the JSON file
 function fillOmitTeamsList(){
@@ -198,6 +198,20 @@ function fillHighlightTable(){
 
     var data_to_show = site + "-" + highlight;
     var sorted_data = sortData(data, data_to_show);
+    switch(highlight){
+        case "fpts":
+            var decimals = 1;
+            var mult = 1;
+            break;
+        case "oth":
+            var decimals = 0;
+            var mult = 100;
+            break;
+        case "jvalue":
+            var decimals = 2;
+            var mult = 1;
+            break;
+    }
 
     for(let i = 0; i < sorted_data.length; i++){
         var row = table.insertRow(-1);
@@ -206,7 +220,8 @@ function fillHighlightTable(){
         cell = row.insertCell(-1);
         cell.innerHTML = sorted_data[i][0];
         cell = row.insertCell(-1);
-        cell.innerHTML = sorted_data[i][1];
+        cell.innerHTML = (mult * sorted_data[i][1]).toFixed(decimals);
+        if(highlight == "oth")  cell.innerHTML += "%";
     }
 }
 
@@ -324,8 +339,16 @@ function getConstraints(site){
 async function convertPlayersToVariables(site, players, data){
     let promise = new Promise((resolve, reject) => {
         var teams = [];
+        var team_effects = [];
         for(let player of players){
             var info = data[player];
+
+            if(!teams.includes(info["Team"])) {
+                teams.push(info["Team"]);
+                team_effects.push(Math.random()*2);
+            }
+            if(info[site + "-position"] == "P") var this_sd = Number(info["stdev"]); else var this_sd = Number(info["stdev"]) * team_effects[teams.indexOf(info["Team"])];
+
             if(info[site + "-position"].includes("/")){
                 var position = info[site + "-position"].split("/");
                 var use_pos = position[Math.floor(Math.random() * position.length)];
@@ -335,7 +358,7 @@ async function convertPlayersToVariables(site, players, data){
             if(site == "fanduel"){
                 if(["C", "1B"].includes(use_pos)) use_pos = "C/1B";
             }
-            data[player][site + "-fpts"] = randomizeProjection(info[site + "-fpts"], info["stdev"]);
+            data[player]["build-fpts"] = randomizeProjection(info[site + "-fpts"], this_sd);
             data[player][use_pos] = 1;
             data[player][site + "-position"] = use_pos;
             data[player]["Players"] = 1;
@@ -345,7 +368,6 @@ async function convertPlayersToVariables(site, players, data){
             }else{
                 data[player][info["Team"]] = 2;
             }
-            if(!teams.includes(info["Team"])) teams.push(info["Team"]);
         }
         resolve([data, teams]);
     }).then((result) => {
@@ -355,13 +377,18 @@ async function convertPlayersToVariables(site, players, data){
         data = convertVariablesToStacks(site, data, teams, stack_type);
         return [data, teams];
     });
-    //console.log(await promise);
+
     return promise;
 }
 
 // Convert the variables to stacks for the solver
 function convertVariablesToStacks(site, data, teams, stack_type){
     var stacks = {};
+    var force_stacks = document.getElementById("force-stacks");
+    var force_stacks_list = [];
+    for(let stack of force_stacks.options){
+        force_stacks_list.push(stack.value);
+    }
     for(let team of teams){
         var team_players = [];
 
@@ -372,6 +399,7 @@ function convertVariablesToStacks(site, data, teams, stack_type){
                 team_players.push(data[player]);
             }       
         }
+        // if the team is not in the force stacks list and the force stacks list has length > 0, skip the team
         for(let type of stack_type){
             // get the top 'type' players from the team
             var num = Number(type);
@@ -387,6 +415,7 @@ function convertVariablesToStacks(site, data, teams, stack_type){
                 "draftkings-jvalue": 0,
                 "fanduel-jvalue": 0,
                 "yahoo-jvalue": 0,
+                "build-fpts": 0,
                 "C": 0,
                 "1B": 0,
                 "2B": 0,
@@ -398,11 +427,13 @@ function convertVariablesToStacks(site, data, teams, stack_type){
                 "stack_players" : []
 
             };
+            if(force_stacks_list.length > 0 && force_stacks_list.includes(team)) this_stack["force-stack"] = 1;
+
             this_stack[team] = 2;
             this_stack[type+ "-stack"] = 1;
-            // only use the top num players based on site + "-fpts"
+            // only use the top num players based on "build-fpts"
             team_players.sort(function(a, b){
-                return b[site + "-fpts"] - a[site + "-fpts"];
+                return b["build-fpts"] - a["build-fpts"];
             });
             for(let i = 0; i < num; i++){
                 this_stack["stack_players"].push(team_players[i]);//[site + "-id"]);
@@ -442,15 +473,25 @@ async function buildOneLineup(site, constraints, players, data){
     var variables = converted[0];
     var teams = converted[1];
     var stack_type = document.getElementById("stack-type").value.split("-");
+    var force_stacks = document.getElementById("force-stacks");
+    if(force_stacks.options.length > 0){
+        constraints["force-stack"] = {"min": 1};
+    }
     for(let type of stack_type){
-        if(type != "1") constraints[type + "-stack"] = {"equal":1};
+        if(type != "1"){ 
+            if(!(type + "-stack" in constraints)){
+                constraints[type + "-stack"] = {"equal":1};
+            }else{
+                constraints[type + "-stack"]["equal"] += 1;
+            }
+        }
     }
     
     for(let t of teams){
         constraints[t] = {"max":3};
     }
     var model = {
-        "optimize": site + "-fpts",
+        "optimize": "build-fpts",
         "opType": "max",
         "constraints": constraints,
         "variables": variables,
@@ -463,12 +504,12 @@ async function buildOneLineup(site, constraints, players, data){
         var result = solver.Solve(model);
         if(result.feasible == false){
             console.log("No solution found");
-            //buildOneLineup(site, getConstraints(site), Object.keys(data), data);
+            buildOneLineup(site, getConstraints(site), Object.keys(data), data);
             return;
         }
         result = retrieveStacks(result, variables);
         if(result == "fail"){
-            //buildOneLineup(site, getConstraints(site), Object.keys(data), data);
+            buildOneLineup(site, getConstraints(site), Object.keys(data), data);
             return;
         }        
         var lineup = [];
@@ -782,7 +823,8 @@ function cutOffYahooEntries(arr){
 function updateOwnership(){
     var lineups = document.getElementById("lineups-table").rows;
     var table = document.getElementById("ownership-table");
-    var headers = ["Rank", "Player", "Team", "Ownership"];
+    var headers = ["Player", "Position", "Team", "Ownership"];
+    var positions = getLineupsTableHeaders();
     while(table.rows.length > 0){
         table.deleteRow(-1);
     }
@@ -801,7 +843,7 @@ function updateOwnership(){
             let team = c.innerHTML.split("<br>")[3];
             let id = c.innerHTML.split("<br>")[1];
             if(!(id in ownership)){
-                ownership[id] = {"name": name, "team": team, "count": 1};
+                ownership[id] = {"name": name, "team": team, "count": 1, "position": positions[c.cellIndex]};
             }else{
                 ownership[id]["count"]++;
             }
@@ -817,12 +859,25 @@ function updateOwnership(){
     for(let i = 0; i < sortable.length; i++){
         var row = table.insertRow(-1);
         var cell = row.insertCell(-1);
-        cell.innerHTML = i + 1;
-        cell = row.insertCell(-1);
+        
         cell.innerHTML = sortable[i][1]["name"];
+        cell = row.insertCell(-1);
+        cell.innerHTML = sortable[i][1]["position"];
         cell = row.insertCell(-1);
         cell.innerHTML = sortable[i][1]["team"];
         cell = row.insertCell(-1);
         cell.innerHTML = (100*sortable[i][1]["count"]/(lineups.length-1)).toFixed(1) + "%";
     }
+}
+
+// move team from one list to the other
+function moveTeam(from, to){
+    var to_list = document.getElementById(to);
+    var from_list = document.getElementById(from);
+    var option = from_list.options[from_list.selectedIndex];
+    var new_option = document.createElement("option");
+    new_option.innerHTML = option.innerHTML;
+    new_option.value = option.value;
+    to_list.appendChild(new_option);
+    from_list.remove(from_list.selectedIndex);
 }
