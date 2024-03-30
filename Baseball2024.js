@@ -475,7 +475,11 @@ async function buildOneLineup(site, constraints, players, data){
     var stack_type = document.getElementById("stack-type").value.split("-");
     var force_stacks = document.getElementById("force-stacks");
     if(force_stacks.options.length > 0){
-        constraints["force-stack"] = {"min": 1};
+        if(force_stacks.options.length < 4){
+            constraints["force-stack"] = {"min": 1};
+        }else{
+            constraints["force-stack"] = {"min": 2};
+        }
     }
     for(let type of stack_type){
         if(type != "1"){ 
