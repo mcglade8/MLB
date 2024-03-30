@@ -49,18 +49,18 @@
                                     <input type="number" id="num-top-plays" value="40">
                                 </td>
                                 <td>
-                                    <div style="display:flex">
+                                    <div style="display:flex; justify-content: space-around;">
                                         <div><text>Force stacks:</text><br><select id="force-stacks" class="team-select"  multiple></select></div>
                                         <div style="vertical-align: middle;">
-                                            <button onclick="moveTeam('in-play', 'force-stacks')"><i class="fa fa-arrow-left"></i></button>
-                                            <button onclick="moveTeam('force-stacks', 'in-play')"><i class="fa fa-arrow-right"></i></button>
+                                            <button class="move-team-btn" onclick="moveTeam('in-play', 'force-stacks')"><i class="fa fa-arrow-left"></i></button>
+                                            <button class="move-team-btn" onclick="moveTeam('force-stacks', 'in-play')"><i class="fa fa-arrow-right"></i></button>
                                         </div>
-                                        <div><text>Omit teams:</text><br> <select id="in-play" class="team-select" multiple></select></div>
+                                        <div><text>In Play:</text><br> <select id="in-play" class="team-select" multiple></select></div>
                                         <div style="vertical-align: middle;">
-                                            <button onclick="moveTeam('omitted', 'in-play')"><i class="fa fa-arrow-left"></i></button>
-                                            <button onclick="moveTeam('in-play', 'omitted')"><i class="fa fa-arrow-right"></i></button>
+                                            <button class="move-team-btn" onclick="moveTeam('omitted', 'in-play')"><i class="fa fa-arrow-left"></i></button>
+                                            <button class="move-team-btn" onclick="moveTeam('in-play', 'omitted')"><i class="fa fa-arrow-right"></i></button>
                                         </div>
-                                        <div> Add back: <select  id="omitted" class="team-select" multiple></select></div>
+                                        <div> Omitted: <br><select  id="omitted" class="team-select" multiple></select></div>
                                     </div>
                                 </td>
                                 <td>

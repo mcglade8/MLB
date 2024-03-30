@@ -100,3 +100,12 @@ tr:nth-child(even){
     max-width: 150px;
     max-height: 100px;
 }
+.move-team-btn{
+    background: #AAAAFF;
+    color: black;
+    border: 1px solid black;
+    padding: 5px;
+    font-size: 16px;
+    cursor: pointer;
+    margin-top: 80%;
+}
