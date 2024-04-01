@@ -48,10 +48,23 @@ function prepareForSite(){
 function fillOmitTeamsList(){
     var data = getInfoFromJSON("baseball_data.json");
     var teams = [];
+    var list = document.getElementById("in-play");
+    var list2 = document.getElementById("omitted");
+    var list3 = document.getElementById("force-stacks");
+    // clear the lists
+    while(list.options.length > 0){
+        list.remove(0);
+    }
+    while(list2.options.length > 0){
+        list2.remove(0);
+    }
+    while(list3.options.length > 0){
+        list3.remove(0);
+    }
+    
     for(let player of Object.keys(data)){
         if(!teams.includes(data[player]["Team"])) teams.push(data[player]["Team"]);
     }
-    var list = document.getElementById("in-play");
     teams.sort();
     for(let team of teams){
         var option = document.createElement("option");
