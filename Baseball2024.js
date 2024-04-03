@@ -17,6 +17,7 @@ function getInfoFromJSON(file){
 $(document).ready(function(){
     prepareForSite();
     initializeFunctions();
+    colorBySite("site-select");
 
 });
 
@@ -27,6 +28,30 @@ function prepareForSite(){
     fillHighlightTable();
     fillOmitTeamsList();
     document.getElementById("previous-lineups").value = "";
+    colorBySite("site-select");
+
+}
+
+// Color the site based on the selected DFS site
+function colorBySite(id){
+    var el = document.getElementById(id);
+    var site = document.getElementById("site-select").value.toLowerCase();
+    var colors = {
+        "draftkings":{
+            "background-color": "#004400",
+            "color": "#AAFFAA"
+        } ,
+        "fanduel": {
+            "background-color": "#000044",
+            "color": "#AABBFF"
+        },
+        "yahoo": {
+            "background-color": "#440044",
+            "color": "#FFAAFF"
+        }
+    };
+    el.style.backgroundColor = colors[site]["background-color"];
+    el.style.color = colors[site]["color"];
 }
 
 // Move team from one list to the other

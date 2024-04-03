@@ -126,8 +126,8 @@ MLBbref2 <-subset(MLBbref, Tm!="" & Tm!="League Average" & Tm !="Tm")
 ## (!!!Optional!!! - First) Gather all at-bats between start and end date
 ```{r acquire knowledge}
 
-start_date = "2022-05-17"
-end_date = "2022-06-17"
+start_date = "2024-03-28"
+end_date = "2024-04-02"
 
 
 ## Get all stats between start and end dates
@@ -919,7 +919,7 @@ teams_by_game %>%
 today = Sys.Date()
 
 
-home_teams_on_slate <- c("Boston Red Sox", "Los Angeles Dodgers", "Colorado Rockies", "Arizona Diamondbacks", "Seattle Mariners")
+home_teams_on_slate <- c("New York Mets", "Chicago White Sox", "Chicago Cubs", "Houston Astros", "Arizona Diamondbacks", "Oakland Athletics", "Seattle Mariners", "San Diego Padres", "Los Angeles Dodgers")
 
 todays_game_pks <- as.data.frame(mlb_schedule(season = 2024, level_ids = "1")) %>%
   filter(date == today) %>%
