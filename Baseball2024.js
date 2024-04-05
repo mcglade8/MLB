@@ -396,7 +396,7 @@ async function convertPlayersToVariables(site, players, data){
             if(site == "fanduel"){
                 if(["C", "1B"].includes(use_pos)) use_pos = "C/1B";
             }
-            data[player]["build-fpts"] = randomizeProjection(info[site + "-fpts"], this_sd);
+            data[player]["build-fpts"] = randomizeProjection(info[site + "-jvalue"], this_sd);//info[site + "-fpts"], this_sd);
             data[player][use_pos] = 1;
             data[player][site + "-position"] = use_pos;
             data[player]["Players"] = 1;

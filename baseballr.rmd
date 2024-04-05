@@ -183,7 +183,7 @@ loop_start <- loop_start+1
 ## Get home and away team info for each game_pk
 
 
-season_game_pks <- as.data.frame(mlb_schedule(season = 2022, level_ids = "1")) %>%
+season_game_pks <- as.data.frame(mlb_schedule(season = 2024, level_ids = "1")) %>%
   select(game_pk, teams_away_team_name, teams_home_team_name)
 
 
