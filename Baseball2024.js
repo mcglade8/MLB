@@ -18,6 +18,7 @@ $(document).ready(function(){
     prepareForSite();
     initializeFunctions();
     colorBySite("site-select");
+    colorPlayerTable();
 
 });
 
@@ -27,6 +28,7 @@ function prepareForSite(){
     initializeLineupsTable();
     fillHighlightTable();
     fillOmitTeamsList();
+    fillOmitPitchersList();
     document.getElementById("previous-lineups").value = "";
     colorBySite("site-select");
 
@@ -95,6 +97,36 @@ function fillOmitTeamsList(){
         var option = document.createElement("option");
         option.text = team;
         option.value = team;
+        list.appendChild(option);
+    }
+}
+
+// same as above but for pitchers
+function fillOmitPitchersList(){
+    var data = getInfoFromJSON("baseball_data.json");
+    var pitchers = [];
+    var list = document.getElementById("in-play-pitchers");
+    var list2 = document.getElementById("omitted-pitchers");
+    var list3 = document.getElementById("force-pitchers");
+    // clear the lists
+    while(list.options.length > 0){
+        list.remove(0);
+    }
+    while(list2.options.length > 0){
+        list2.remove(0);
+    }
+    while(list3.options.length > 0){
+        list3.remove(0);
+    }
+    
+    for(let player of Object.keys(data)){
+        if(data[player]["draftkings-position"] == "P" && Number(data[player]["draftkings-fpts"] > 0)) pitchers.push(player);
+    }
+    pitchers.sort();
+    for(let p of pitchers){
+        var option = document.createElement("option");
+        option.text = p;
+        option.value = p;
         list.appendChild(option);
     }
 }
@@ -318,7 +350,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Build lineups based on the constraints and the selected DFS site
 async function buildLineups(){
     var site = document.getElementById("site-select").value.toLowerCase();
-    var data = filterForTopPlays(getInfoFromJSON("baseball_data.json"));
+    var data = getInfoFromJSON("baseball_data.json"); // Deprecated filterForTopPlays(getInfoFromJSON("baseball_data.json"));
     var constraints = getConstraints(site);
     
     var players = Object.keys(data);
@@ -383,9 +415,9 @@ async function convertPlayersToVariables(site, players, data){
 
             if(!teams.includes(info["Team"])) {
                 teams.push(info["Team"]);
-                team_effects.push(Math.random()*2);
+                team_effects.push(Math.random()*10-5);
             }
-            if(info[site + "-position"] == "P") var this_sd = Number(info["stdev"]); else var this_sd = Number(info["stdev"]) * team_effects[teams.indexOf(info["Team"])];
+            if(info[site + "-position"] == "P") var this_sd = Number(info["stdev"]); else var this_sd = Number(info["stdev"]) + team_effects[teams.indexOf(info["Team"])];
 
             if(info[site + "-position"].includes("/")){
                 var position = info[site + "-position"].split("/");
@@ -400,11 +432,22 @@ async function convertPlayersToVariables(site, players, data){
             data[player][use_pos] = 1;
             data[player][site + "-position"] = use_pos;
             data[player]["Players"] = 1;
+            var stack_type = document.getElementById("stack-type").value.split("-");
+
             if(info[site+"-position"] == "P"){ 
-                data[player][info["Opp"]] = document.getElementById("allow-bvp-yes").checked ? 1 : 3;
-                data[player][info["Team"]] = 1;
+                if(stack_type != "No Rules"){
+                    data[player][info["Opp"]] = document.getElementById("allow-bvp-yes").checked ? 1 : 3;
+                    data[player][info["Team"]] = 1;
+                }else{
+                    data[player][info["Opp"]] = document.getElementById("allow-bvp-yes").checked ? 1 : 3;
+                    data[player][info["Team"]] = 0;
+                }
             }else{
-                data[player][info["Team"]] = 2;
+                if(stack_type != "No Rules"){
+                    data[player][info["Team"]] = 2;
+                }else{
+                    data[player][info["Team"]] = 0.6;
+                }
             }
         }
         resolve([data, teams]);
@@ -412,7 +455,7 @@ async function convertPlayersToVariables(site, players, data){
         var data = result[0];
         var teams = result[1];
         var stack_type = document.getElementById("stack-type").value.split("-");
-        data = convertVariablesToStacks(site, data, teams, stack_type);
+        if(stack_type != "No Rules") data = convertVariablesToStacks(site, data, teams, stack_type);
         return [data, teams];
     });
 
@@ -512,19 +555,34 @@ async function buildOneLineup(site, constraints, players, data){
     var teams = converted[1];
     var stack_type = document.getElementById("stack-type").value.split("-");
     var force_stacks = document.getElementById("force-stacks");
-    if(force_stacks.options.length > 0){
-        if(force_stacks.options.length < 4){
-            constraints["force-stack"] = {"min": 1};
-        }else{
-            constraints["force-stack"] = {"min": 2};
-        }
-    }
-    for(let type of stack_type){
-        if(type != "1"){ 
-            if(!(type + "-stack" in constraints)){
-                constraints[type + "-stack"] = {"equal":1};
+    var force_pitchers = document.getElementById("force-pitchers");
+    if(stack_type[0] != "No Rules"){
+        if(force_stacks.options.length > 0){
+            if(force_stacks.options.length < 2){
+                constraints["force-stack"] = {"min": 1};
             }else{
-                constraints[type + "-stack"]["equal"] += 1;
+                constraints["force-stack"] = {"min": 2};
+            }
+        }
+        for(let type of stack_type){
+            if(type != "1"){ 
+                if(!(type + "-stack" in constraints)){
+                    constraints[type + "-stack"] = {"equal":1};
+                }else{
+                    constraints[type + "-stack"]["equal"] += 1;
+                }
+            }
+        }
+        if(force_pitchers.options.length > 0){
+            if(force_pitchers.options.length < 2 || site == "fanduel"){
+                constraints["force-pitchers"] = {"equal": 1};
+            }else{
+                constraints["force-pitchers"] = {"equal": 2};
+            }
+            for(let p of force_pitchers.options){
+                if(p.value in variables){
+                    variables[p.value]["force-pitchers"] = 1;
+                }
             }
         }
     }
@@ -740,8 +798,7 @@ function addLineupToTable(result, data){
     for(let p of lineupPlayers){
         let c = row.insertCell(-1)
         c.innerHTML = p[site+"-name"] + "<br>" + p[site+"-id"] + "<br>" + p[site+"-salary"] + "<br>" + p.Team;
-        //c.style.backgroundColor = getTeamColor(p.Team);
-        //c.style.color = getTeamSecondaryColor(p.Team);
+        colorItem(p.Team, c);
     }
 
     document.getElementById('lineups-built').innerHTML = Number(document.getElementById('lineups-table').rows.length) - 1;
@@ -922,4 +979,99 @@ function moveTeam(from, to){
     new_option.value = option.value;
     to_list.appendChild(new_option);
     from_list.remove(from_list.selectedIndex);
+}
+
+// color player table rows based on team
+function colorPlayerTable(){
+    var table = document.getElementById("players-table");
+    for(let r of table.rows){
+        if(r.rowIndex == 0) continue;
+        var team = r.cells[6].textContent;
+        colorItem(team, r);
+    }
+}
+
+// color any item based on team
+function colorItem(team, item){
+    let primary = getTeamColor(team);
+    let secondary = getTeamSecondaryColor(team);
+    if(team == "NYY") item.style.backgroundImage =  "repeating-linear-gradient(70deg, "
+     + primary + "," + secondary +" 0.5%, " + secondary + " 10%, " + primary + " 0.5%)"; else{
+        item.style.backgroundColor = primary;
+        item.style.color = secondary;
+     } 
+}
+
+// get the color for a team
+function getTeamColor(team){
+    var colors = {
+        "ARI": "#A71930",
+        "ATL": "#13274F",
+        "BAL": "#DF4601",
+        "BOS": "#0C2340",
+        "CHC": "#0E3386",
+        "CWS": "#27251F",
+        "CIN": "#C6011F",
+        "CLE": "#0C2340",
+        "COL": "#333366",
+        "DET": "#0C2C56",
+        "HOU": "#002D62",
+        "KC": "#004687",
+        "LAA": "#BA0021",
+        "LAD": "#005A9C",
+        "MIA": "#00A3E0",
+        "MIL": "#0A2351",
+        "MIN": "#002B5C",
+        "NYM": "#002D72",
+        "NYY": "#003087",
+        "OAK": "#003831",
+        "PHI": "#E81828",
+        "PIT": "#FDB827",
+        "SD": "#2F241D",
+        "SF": "#FD5A1E",
+        "SEA": "#005C5C",
+        "STL": "#C41E3A",
+        "TB": "#8FBCE6",
+        "TEX": "#003278",
+        "TOR": "#134A8E",
+        "WSH": "#AB0003"
+    };
+    return colors[team];
+}
+
+// get the secondary color for a team
+function getTeamSecondaryColor(team){
+    var colors = {
+        "ARI": "#E3D4AD",
+        "ATL": "#CE1141",
+        "BAL": "#000000",
+        "BOS": "#BD3039",
+        "CHC": "#CC3433",
+        "CWS": "#C4CED4",
+        "CIN": "#FFFFFF",
+        "CLE": "#E31937",
+        "COL": "#C4CED4",
+        "DET": "#FA4616",
+        "HOU": "#EB6E1F",
+        "KC": "#BD9B60",
+        "LAA": "#003263",
+        "LAD": "#FFFFFF",
+        "MIA": "#EF3340",
+        "MIL": "#FFC52F",
+        "MIN": "#D31145",
+        "NYM": "#FF5910",
+        "NYY": "#FFFFFF",
+        "OAK": "#EFB21E",
+        "PHI": "#284898",
+        "PIT": "#27251F",
+        "SD": "#FFC425",
+        "SF": "#000000",
+        "SEA": "#C4CED4",
+        "STL": "#FEDB00",
+        "TB": "#092C5C",
+        "TEX": "#C0111F",
+        "TOR": "#1D2D5C",
+        "WSH": "#14225A"
+    };
+    return colors[team];
 }

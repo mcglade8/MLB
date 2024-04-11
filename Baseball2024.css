@@ -68,7 +68,7 @@ table{
     padding: 10px;
     border-left: 1px solid #888888;
     border-right: 1px solid #888888;
-
+    font-weight: bold;
 }
 th{
     background: #8888FF;
