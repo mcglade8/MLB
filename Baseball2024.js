@@ -211,7 +211,7 @@ function toggleContent(content){
         if(button.innerHTML.toLowerCase() == content){
             button.className = "nav-button selected";
         }else{
-            button.className = "nav-button";
+            button.className = "nav-button unselected";
         }
     }
 }
@@ -536,7 +536,7 @@ function convertVariablesToStacks(site, data, teams, stack_type){
 // Randomize the projection based on the standard deviation
 function randomizeProjection(projection, sd){
     var variance = document.getElementById("variance").value;
-    sd = Number(sd) * (1 + (variance-50)/100);
+    sd = Number(sd) * (1 + (variance)/100);
     var new_proj = randNormal(Number(projection), sd);
     return new_proj.toFixed(1);
 }
@@ -555,7 +555,9 @@ async function buildOneLineup(site, constraints, players, data){
     var teams = converted[1];
     var stack_type = document.getElementById("stack-type").value.split("-");
     var force_stacks = document.getElementById("force-stacks");
+    var omit_stacks = document.getElementById("omitted");
     var force_pitchers = document.getElementById("force-pitchers");
+    var omit_pitchers = document.getElementById("omitted-pitchers");
     if(stack_type[0] != "No Rules"){
         if(force_stacks.options.length > 0){
             if(force_stacks.options.length < 2){
@@ -573,22 +575,36 @@ async function buildOneLineup(site, constraints, players, data){
                 }
             }
         }
-        if(force_pitchers.options.length > 0){
-            if(force_pitchers.options.length < 2 || site == "fanduel"){
-                constraints["force-pitchers"] = {"equal": 1};
-            }else{
-                constraints["force-pitchers"] = {"equal": 2};
+    }
+    if(force_pitchers.options.length > 0){
+        if(force_pitchers.options.length < 2 || site == "fanduel"){
+            constraints["force-pitchers"] = {"equal": 1};
+        }else{
+            constraints["force-pitchers"] = {"equal": 2};
+        }
+        for(let p of force_pitchers.options){
+            if(p.value in variables){
+                variables[p.value]["force-pitchers"] = 1;
             }
-            for(let p of force_pitchers.options){
-                if(p.value in variables){
-                    variables[p.value]["force-pitchers"] = 1;
-                }
+        }
+    }
+    if(omit_pitchers.options.length > 0){
+        for(let p of omit_pitchers.options){
+            if(p.value in variables){
+                constraints[p.value] = {"equal": 0};
             }
         }
     }
     
+
+    
     for(let t of teams){
         constraints[t] = {"max":3};
+    }
+    if(omit_stacks.options.length > 0){
+        for(let team of omit_stacks.options){
+            constraints[team.value] = {"equal":0};
+        }
     }
     var model = {
         "optimize": "build-fpts",
