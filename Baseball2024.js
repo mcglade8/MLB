@@ -1086,7 +1086,7 @@ function getTeamSecondaryColor(team){
         "STL": "#FEDB00",
         "TB": "#092C5C",
         "TEX": "#C0111F",
-        "TOR": "#1D2D5C",
+        "TOR": "#FF0000",
         "WSH": "#14225A"
     };
     return colors[team];
