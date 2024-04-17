@@ -51,30 +51,39 @@
                                 </td>-->
                                 <td colspan="3">
                                     <div style="display:flex; justify-content: space-around;">
-                                        <div><text>Force stacks:</text><br><select id="force-stacks" class="team-select"></select></div>
-                                        <div class="btn-container">
-                                            <button class="move-team-btn" onclick="moveTeam('in-play', 'force-stacks')"><i class="fa fa-arrow-left"></i></button>
+                                        <div>
+                                            <text>Force stacks:</text><br><select id="force-stacks" class="team-select"></select>
                                             <button class="move-team-btn" onclick="moveTeam('force-stacks', 'in-play')"><i class="fa fa-arrow-right"></i></button>
                                         </div>
-                                        <div><text>In Play:</text><br> <select id="in-play" class="team-select"></select></div>
-                                        <div class="btn-container">
-                                            <button class="move-team-btn" onclick="moveTeam('omitted', 'in-play')"><i class="fa fa-arrow-left"></i></button>
+                                        <div>
+                                            <text>In Play:</text><br> 
+                                            <button class="move-team-btn" onclick="moveTeam('in-play', 'force-stacks')"><i class="fa fa-arrow-left"></i></button>
+                                            <select id="in-play" class="team-select"></select>
                                             <button class="move-team-btn" onclick="moveTeam('in-play', 'omitted')"><i class="fa fa-arrow-right"></i></button>
                                         </div>
-                                        <div> Omitted: <br><select  id="omitted" class="team-select"></select></div>
+                                        <div>                                            
+                                            <text>Omitted:</text><br>
+                                            <button class="move-team-btn" onclick="moveTeam('omitted', 'in-play')"><i class="fa fa-arrow-left"></i></button>
+                                            <select  id="omitted" class="team-select"></select>
+                                        </div>
                                     </div>
                                     <div style="display:flex; justify-content: space-around;">
-                                        <div><text>Force pitchers:</text><br><select id="force-pitchers" class="team-select"></select></div>
-                                        <div  class="btn-container">
-                                            <button class="move-team-btn" onclick="moveTeam('in-play-pitchers', 'force-pitchers')"><i class="fa fa-arrow-left"></i></button>
+                                        <div>
+                                            <text>Force pitchers:</text><br>
+                                            <select id="force-pitchers" class="team-select"></select>
                                             <button class="move-team-btn" onclick="moveTeam('force-pitchers', 'in-play-pitchers')"><i class="fa fa-arrow-right"></i></button>
                                         </div>
-                                        <div><text>In Play:</text><br> <select id="in-play-pitchers" class="team-select"></select></div>
-                                        <div  class="btn-container">
-                                            <button class="move-team-btn" onclick="moveTeam('omitted-pitchers', 'in-play-pitchers')"><i class="fa fa-arrow-left"></i></button>
+                                        <div>
+                                            <text>In Play:</text><br> 
+                                            <button class="move-team-btn" onclick="moveTeam('in-play-pitchers', 'force-pitchers')"><i class="fa fa-arrow-left"></i></button>
+                                            <select id="in-play-pitchers" class="team-select"></select>
                                             <button class="move-team-btn" onclick="moveTeam('in-play-pitchers', 'omitted-pitchers')"><i class="fa fa-arrow-right"></i></button>
                                         </div>
-                                        <div> Omitted: <br><select  id="omitted-pitchers" class="team-select"></select></div>
+                                        <div> 
+                                            <text>Omitted:</text><br>
+                                            <button class="move-team-btn" onclick="moveTeam('omitted-pitchers', 'in-play-pitchers')"><i class="fa fa-arrow-left"></i></button>
+                                            <select  id="omitted-pitchers" class="team-select"></select>
+                                        </div>
                                     </div>
                                 </td>
                                 <td>
@@ -96,7 +105,7 @@
                                         <option value="4-4">4-4</option>
                                         <option value="4-3-1" selected>4-3-1</option>
                                         <option value="4-2-2">4-2-2</option>
-                                        <option value="3-3-2">3-2-2</option>
+                                        <option value="3-3-2">3-3-2</option>
                                     </select>
                                 </td>
                                 <td>
