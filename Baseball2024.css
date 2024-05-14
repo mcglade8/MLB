@@ -115,3 +115,26 @@ tr:nth-child(even){
     justify-content: center;
 
 }
+.info-box{
+    background: #AAAAFF;
+    color: black;
+    border: 1px solid black;
+    padding: 10px;
+}
+.position-button{
+    background: #AAAAAA;
+    color: black;
+    border: 1px solid black;
+    border-radius: 5px;
+    padding: 5px;
+    cursor: pointer;
+    margin: 5px;
+}
+
+.team-button{
+    border: 1px solid black;
+    border-radius: 5px;
+    padding: 5px;
+    cursor: pointer;
+    margin: 5px;
+}

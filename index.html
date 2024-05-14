@@ -3,9 +3,9 @@
 <head>
     <title>Baseball 2024</title>
     <link rel="stylesheet" type="text/css" href="Baseball2024.css">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
     <script src="solver.js"></script>
     <script src="require.js"></script>
-    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
 </head>
 <body>
@@ -15,15 +15,14 @@
     <div id="flex-container">
         <div id="sidebar">
             <select id="highlight-select" onchange="fillHighlightTable()">
-                <option value="fpts">Top Projections</option>
+                <option value="q">Top Q (desired ownership)</option>
                 <option value="jvalue">Top J-values</option>
-                <option value="oth">Top Odds To Hit</option>
             </select>
             <select id="site-select" onchange="prepareForSite()">
+                <option value="fanduel" style="background-color:#000044; color: #AABBFF">FanDuel</option>
                 <option value="draftkings" style="background-color: #004400;
                 color: #AAFFAA">DraftKings</option>
-                <option value="fanduel" style="background-color:#000044; color: #AABBFF">FanDuel</option>
-                <option value="yahoo" style="background-color: #440044; color: #FFAAFF">Yahoo</option>
+                <!--<option value="yahoo" style="background-color: #440044; color: #FFAAFF">Yahoo</option>-->
             </select>
             <table id="highlight-table">
                 
@@ -31,17 +30,42 @@
         </div>
         <div id="main">
             <div id="nav">
-                <button id="home" class="nav-button selected">Players</button>
-                <button id="teams" class="nav-button unselected">Builder</button>
-                <button id="ownership" class="nav-button unselected" onclick="updateOwnership()">Ownership</button>
+                <button id="builder-tab" class="nav-button selected">Builder</button>
+                <button id="players-tab" class="nav-button unselected">Players</button>
+                <button id="ownership-tab" class="nav-button unselected" onclick="updateOwnership()">Ownership</button>
             </div>
             <div id="content">  
-                <div id="players" class="show">
+                
+                <div id="players" class="hide">
+                    <div class="info-box">
+                        <table>
+                            <tr>
+                                <td>Filter by team</td>
+                                <td id="team-button-cell">
+    
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>Filter by position</td>
+                                <td class="position-button-cell">
+                                    <button class="position-button" onclick="clearFilters()">Clear Filters</button>
+                                    <button class="position-button" onclick="filterByPosition('P')">P</button>
+                                    <button class="position-button" onclick="filterByPosition('C')">C</button>
+                                    <button class="position-button" onclick="filterByPosition('1B')">1B</button>
+                                    <button class="position-button" onclick="filterByPosition('2B')">2B</button>
+                                    <button class="position-button" onclick="filterByPosition('3B')">3B</button>
+                                    <button class="position-button" onclick="filterByPosition('SS')">SS</button>
+                                    <button class="position-button" onclick="filterByPosition('OF')">OF</button>
+                                </td>
+                            </tr>
+                        </table>
+                        
+                    </div>
                     <table id="players-table">
                         
                     </table>
                 </div>
-                <div id="builder" class="hide">
+                <div id="builder" class="show">
                     <div id="build-constraints">
                         <table id="constraints-table">
                             <tr>
@@ -52,6 +76,7 @@
                                 <td colspan="3">
                                     <div style="display:flex; justify-content: space-around;">
                                         <div>
+                                            Strict? <input type="checkbox" id="strict-stacks" checked>
                                             <text>Force stacks:</text><br><select id="force-stacks" class="team-select"></select>
                                             <button class="move-team-btn" onclick="moveTeam('force-stacks', 'in-play')"><i class="fa fa-arrow-right"></i></button>
                                         </div>
@@ -69,6 +94,7 @@
                                     </div>
                                     <div style="display:flex; justify-content: space-around;">
                                         <div>
+                                            Strict? <input type="checkbox" id="strict-pitchers" checked>
                                             <text>Force pitchers:</text><br>
                                             <select id="force-pitchers" class="team-select"></select>
                                             <button class="move-team-btn" onclick="moveTeam('force-pitchers', 'in-play-pitchers')"><i class="fa fa-arrow-right"></i></button>
@@ -122,7 +148,7 @@
                             <tr>
                                 <td>Min salary as pct of max</td>
                                 <td>
-                                    <input type="number" id="min-salary" value="95" min="0" max="100">
+                                    <input type="number" id="min-salary" value="98" min="0" max="100">
                                 </td>
                                 <td>
                                     Old lineups: <input type="file" id="previous-lineups" oninput="handleLineupscsv()">
@@ -141,6 +167,9 @@
                     </table>
                 </div>
                 <div id="ownership" class="hide">
+                    <div id="ownership-info" class="info-box">
+                        Player pool: <text id="player-pool">0</text>
+                    </div>
                     <table id="ownership-table">
                         
                     </table>
@@ -149,5 +178,6 @@
         </div>
     </div>
 </body>
+
 <script type="text/javascript" src="Baseball2024.js"></script>
 </html>
